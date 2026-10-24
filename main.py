@@ -22,6 +22,7 @@ PREVIOUS_BATCH_PATH = os.path.join(STATE_DIR, "previous_batch_links.json")
 TARGET_CHANNEL = "hasadalyoum"
 ACCOUNT_COUNT = 11
 MAX_ATTEMPTS_PER_PAIR = 3
+MIN_REPEATED_LINKS_WITHOUT_NEW = 15
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 "
@@ -134,13 +135,19 @@ def pair_key(account_number, link):
     return f"{account_number}|{link}"
 
 
-def links_for_run(current_batch, previous_batches):
+def links_for_run(current_batch, previous_batches, archived_links=()):
     # With new links, pair them with the most recent batch. With none,
     # repeat the two most recent batches until a new batch arrives.
     selected_previous = previous_batches[:1] if current_batch else previous_batches[:2]
     combined = list(dict.fromkeys(
         current_batch + [link for batch in selected_previous for link in batch]
     ))
+    if not current_batch:
+        for link in reversed(archived_links):
+            if link not in combined:
+                combined.append(link)
+            if len(combined) >= MIN_REPEATED_LINKS_WITHOUT_NEW:
+                break
     return combined
 
 
@@ -179,15 +186,19 @@ def run_parallel(accounts, current_batch):
     pair_done = load_json(PAIR_DONE_PATH)
     attempts = load_json(PAIR_ATTEMPTS_PATH)
     previous_batches = load_previous_batches()
-    links = links_for_run(current_batch, previous_batches)
+    archive = read_lines(LINKS_PATH)
+    links = links_for_run(current_batch, previous_batches, archive)
     if not links:
         log("لا توجد روابط جديدة أو من الدفعة السابقة للتنفيذ.")
         return 0
 
     selected_previous = previous_batches[:1] if current_batch else previous_batches[:2]
-    forced_links = {
-        link for batch in selected_previous for link in batch
-    }
+    forced_links = (
+        {link for batch in selected_previous for link in batch}
+        if current_batch else set(links)
+    )
+    if not current_batch and len(links) < MIN_REPEATED_LINKS_WITHOUT_NEW:
+        log(f"تنبيه: الأرشيف يحتوي على {len(links)} روابط سابقة فقط؛ ستُعالج كلها.")
     log(
         f"بدء {len(accounts)} حسابًا بالتوازي على {len(links)} روابط: "
         f"{len(current_batch)} جديدة + {len(forced_links & set(links))} من الدفعات السابقة "
