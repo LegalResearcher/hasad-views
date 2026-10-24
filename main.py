@@ -22,7 +22,6 @@ PREVIOUS_BATCH_PATH = os.path.join(STATE_DIR, "previous_batch_links.json")
 TARGET_CHANNEL = "hasadalyoum"
 ACCOUNT_COUNT = 11
 MAX_ATTEMPTS_PER_PAIR = 3
-MAX_LINKS_PER_BATCH = 5
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 "
@@ -107,26 +106,20 @@ def fetch_links():
     return [f"https://t.me/{TARGET_CHANNEL}/{n}" for n in ids]
 
 
-def select_current_batch(discovered, processed, first_run=False):
-    """اختر حتى خمسة روابط جديدة؛ عند أول تشغيل تجاهل المنشورات الأقدم الظاهرة."""
+def select_current_batch(discovered, processed):
+    """اختر كل الروابط الجديدة المكتشفة في هذا التشغيل."""
     new_links = [link for link in discovered if link not in processed]
-    if first_run:
-        return new_links[-MAX_LINKS_PER_BATCH:], set(new_links)
-    batch = new_links[:MAX_LINKS_PER_BATCH]
-    return batch, set(batch)
+    return new_links, set(new_links)
 
 
 def pull_once():
-    first_run = not os.path.exists(PROCESSED_PATH)
     discovered = fetch_links()
     if not discovered:
         log("لم يتم العثور على منشورات في الصفحة.")
         return []
 
     processed = set(read_lines(PROCESSED_PATH))
-    current_batch, mark_processed = select_current_batch(
-        discovered, processed, first_run
-    )
+    current_batch, mark_processed = select_current_batch(discovered, processed)
     if not current_batch:
         log("لا توجد روابط جديدة.")
         return []
@@ -148,7 +141,7 @@ def links_for_run(current_batch, previous_batches):
     combined = list(dict.fromkeys(
         current_batch + [link for batch in selected_previous for link in batch]
     ))
-    return combined[:2 * MAX_LINKS_PER_BATCH]
+    return combined
 
 
 def process_account(account, links, pair_done, attempts, forced_links):
