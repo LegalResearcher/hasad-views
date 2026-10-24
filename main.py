@@ -64,13 +64,18 @@ def save_json(path, value):
         f.write("\n")
 
 
-def load_previous_batch():
+def load_previous_batches():
     if not os.path.exists(PREVIOUS_BATCH_PATH):
         return []
     try:
         with open(PREVIOUS_BATCH_PATH, "r", encoding="utf-8") as f:
             value = json.load(f)
-        return value if isinstance(value, list) else []
+        if not isinstance(value, list):
+            return []
+        # Migrate the previous flat-list format to a list of batches.
+        if value and all(isinstance(link, str) for link in value):
+            return [value]
+        return [batch for batch in value if isinstance(batch, list)][:2]
     except (ValueError, OSError):
         return []
 
@@ -136,9 +141,13 @@ def pair_key(account_number, link):
     return f"{account_number}|{link}"
 
 
-def links_for_run(current_batch, previous_batch):
-    # السابقة أولًا ثم الجديدة؛ فكلا المجموعتين تُرسل في هذا التشغيل.
-    combined = list(dict.fromkeys(previous_batch + current_batch))
+def links_for_run(current_batch, previous_batches):
+    # With new links, pair them with the most recent batch. With none,
+    # repeat the two most recent batches until a new batch arrives.
+    selected_previous = previous_batches[:1] if current_batch else previous_batches[:2]
+    combined = list(dict.fromkeys(
+        current_batch + [link for batch in selected_previous for link in batch]
+    ))
     return combined[:2 * MAX_LINKS_PER_BATCH]
 
 
@@ -176,17 +185,19 @@ def process_account(account, links, pair_done, attempts, forced_links):
 def run_parallel(accounts, current_batch):
     pair_done = load_json(PAIR_DONE_PATH)
     attempts = load_json(PAIR_ATTEMPTS_PATH)
-    previous_batch = load_previous_batch()
-    links = links_for_run(current_batch, previous_batch)
+    previous_batches = load_previous_batches()
+    links = links_for_run(current_batch, previous_batches)
     if not links:
         log("لا توجد روابط جديدة أو من الدفعة السابقة للتنفيذ.")
-        save_json(PREVIOUS_BATCH_PATH, [])
         return 0
 
-    forced_links = set(previous_batch)
+    selected_previous = previous_batches[:1] if current_batch else previous_batches[:2]
+    forced_links = {
+        link for batch in selected_previous for link in batch
+    }
     log(
         f"بدء {len(accounts)} حسابًا بالتوازي على {len(links)} روابط: "
-        f"{len(current_batch)} جديدة + {len(set(previous_batch) & set(links))} من الدفعة السابقة "
+        f"{len(current_batch)} جديدة + {len(forced_links & set(links))} من الدفعات السابقة "
         f"(حتى {len(accounts) * len(links)} طلبًا)."
     )
     results = {}
@@ -214,9 +225,13 @@ def run_parallel(accounts, current_batch):
 
     save_json(PAIR_DONE_PATH, pair_done)
     save_json(PAIR_ATTEMPTS_PATH, attempts)
-    # الدفعة الجديدة لهذا التشغيل تصبح الدفعة السابقة للدورة التالية.
-    # إذا لم توجد روابط جديدة، لا نكرر المجموعة القديمة بلا نهاية.
-    save_json(PREVIOUS_BATCH_PATH, current_batch)
+    # Keep both recent batches while no fresh links arrive. A fresh batch
+    # becomes newest and shifts the former newest batch into second place.
+    updated_batches = (
+        [current_batch] + previous_batches[:1]
+        if current_batch else previous_batches[:2]
+    )
+    save_json(PREVIOUS_BATCH_PATH, updated_batches)
 
     successful_pairs = sum(
         1
@@ -241,7 +256,7 @@ def main():
         current_batch = pull_once()
     except Exception as error:
         log(f"خطأ في سحب الروابط: {type(error).__name__}: {error}")
-        current_batch = []
+        return 1
 
     return run_parallel(accounts, current_batch)
 

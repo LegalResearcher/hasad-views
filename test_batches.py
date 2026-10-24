@@ -21,16 +21,21 @@ class BatchSelectionTests(unittest.TestCase):
         self.assertEqual(batch, ["link-4", "link-5", "link-6", "link-7", "link-8"])
         self.assertEqual(marked, set(discovered))
 
-    def test_combines_previous_and_new_batches_without_duplicates(self):
+    def test_combines_new_batch_with_most_recent_previous_batch(self):
         previous = [f"old-{n}" for n in range(1, 6)]
+        older = [f"older-{n}" for n in range(1, 6)]
         current = [f"new-{n}" for n in range(1, 6)]
-        self.assertEqual(links_for_run(current, previous), previous + current)
-        self.assertEqual(links_for_run(["shared", "new"], ["shared", "old"]),
-                         ["shared", "old", "new"])
+        self.assertEqual(links_for_run(current, [previous, older]), current + previous)
+        self.assertEqual(links_for_run(["shared", "new"], [["shared", "old"]]),
+                         ["shared", "new", "old"])
 
-    def test_no_new_links_still_allows_one_previous_batch(self):
-        previous = [f"old-{n}" for n in range(1, 6)]
-        self.assertEqual(links_for_run([], previous), previous)
+    def test_no_new_links_repeats_both_previous_batches(self):
+        newest = [f"newest-{n}" for n in range(1, 6)]
+        older = [f"older-{n}" for n in range(1, 6)]
+        self.assertEqual(links_for_run([], [newest, older]), newest + older)
+
+    def test_without_any_new_or_previous_links_returns_empty(self):
+        self.assertEqual(links_for_run([], []), [])
 
 
 if __name__ == "__main__":
