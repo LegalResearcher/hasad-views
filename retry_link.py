@@ -2,10 +2,12 @@ import os
 import re
 import sys
 
+from account_rotation import select_rotating_account
 from browser_sender import BrowserSender
 
 LINK_PATTERN = re.compile(r"^https://t\.me/hasadalyoum/\d+$")
-DONE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state", "done_links.txt")
+STATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state")
+DONE_PATH = os.path.join(STATE_DIR, "done_links.txt")
 
 
 def log(message):
@@ -24,17 +26,18 @@ def mark_done(link):
 
 
 def main():
-    username = os.environ.get("SITE_USERNAME", "").strip()
-    password = os.environ.get("SITE_PASSWORD", "")
     link = os.environ.get("TARGET_LINK", "").strip()
-    if not (username and password):
-        log("❌ أضف SITE_USERNAME وSITE_PASSWORD في Secrets and variables > Actions.")
-        return 1
     if not LINK_PATTERN.fullmatch(link):
         log("❌ الرابط غير صالح؛ يلزم رابط منشور من قناة hasadalyoum.")
         return 2
 
-    log(f"🚀 إعادة تشغيل يدوية للرابط المحدد: {link}")
+    try:
+        account_number, username, password = select_rotating_account(os.environ, STATE_DIR)
+    except (OSError, ValueError) as error:
+        log(f"❌ تعذر اختيار حساب؛ تحقق من الأسرار الثلاثة وحالة account_rotation.json: {error}")
+        return 1
+
+    log(f"🚀 إعادة تشغيل يدوية للرابط المحدد: {link} | الحساب رقم {account_number}")
     with BrowserSender(username, password) as sender:
         status = sender(link)
 

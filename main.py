@@ -5,6 +5,7 @@ import sys
 import time
 
 import requests
+from account_rotation import select_rotating_account
 
 # ══════════════ الإعدادات ══════════════
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -153,13 +154,13 @@ def run_browser_send(sender):
 
 
 def main():
-    username = os.environ.get("SITE_USERNAME", "").strip()
-    password = os.environ.get("SITE_PASSWORD", "")
-    if not (username and password):
-        log("❌ أضف SITE_USERNAME وSITE_PASSWORD في Secrets and variables > Actions.")
+    try:
+        account_number, username, password = select_rotating_account(os.environ, STATE_DIR)
+    except (OSError, ValueError) as error:
+        log(f"❌ تعذر اختيار حساب؛ تحقق من الأسرار الثلاثة وحالة account_rotation.json: {error}")
         return 1
 
-    log(f"🚀 بدء التشغيل | القناة: @{TARGET_CHANNEL} | الوضع: browser")
+    log(f"🚀 بدء التشغيل | القناة: @{TARGET_CHANNEL} | الوضع: browser | الحساب رقم {account_number}")
 
     try:
         pull_once()

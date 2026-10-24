@@ -22,6 +22,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Sync latest state
+        run: |
+          git fetch origin main
+          git reset --hard FETCH_HEAD
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -32,8 +38,12 @@ jobs:
           playwright install --with-deps chromium
       - name: Retry selected link
         env:
-          SITE_USERNAME: ${{ secrets.SITE_USERNAME }}
-          SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
+          SITE_USERNAME_1: ${{ secrets.SITE_USERNAME_1 }}
+          SITE_PASSWORD_1: ${{ secrets.SITE_PASSWORD_1 }}
+          SITE_USERNAME_2: ${{ secrets.SITE_USERNAME_2 }}
+          SITE_PASSWORD_2: ${{ secrets.SITE_PASSWORD_2 }}
+          SITE_USERNAME_3: ${{ secrets.SITE_USERNAME_3 }}
+          SITE_PASSWORD_3: ${{ secrets.SITE_PASSWORD_3 }}
           TARGET_LINK: ${{ inputs.link }}
         run: python retry_link.py
       - name: Commit state
