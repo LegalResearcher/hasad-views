@@ -3,28 +3,26 @@ import os
 import re
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
-from account_rotation import select_rotating_account
+from browser_sender import BrowserSender
 
 # ══════════════ الإعدادات ══════════════
 ROOT = os.path.dirname(os.path.abspath(__file__))
 STATE_DIR = os.path.join(ROOT, "state")
 os.makedirs(STATE_DIR, exist_ok=True)
 
-LINKS_PATH = os.path.join(STATE_DIR, "telegram_links.txt")        # طابور التنفيذ
-PROCESSED_PATH = os.path.join(STATE_DIR, "processed_links.txt")   # روابط تم سحبها
-DONE_PATH = os.path.join(STATE_DIR, "done_links.txt")             # روابط تم تنفيذها
-ATTEMPTS_PATH = os.path.join(STATE_DIR, "failed_attempts.json")   # عدّاد الفشل لكل رابط
+LINKS_PATH = os.path.join(STATE_DIR, "telegram_links.txt")
+PROCESSED_PATH = os.path.join(STATE_DIR, "processed_links.txt")
+LEGACY_DONE_PATH = os.path.join(STATE_DIR, "done_links.txt")
+PAIR_DONE_PATH = os.path.join(STATE_DIR, "account_link_done.json")
+PAIR_ATTEMPTS_PATH = os.path.join(STATE_DIR, "account_link_attempts.json")
 
 TARGET_CHANNEL = "hasadalyoum"
-
-SERVICE_ID = "9336"
-QUANTITY = "100"
-
-MAX_ATTEMPTS_PER_LINK = 3   # بعد 3 إخفاقات يُتخطى الرابط نهائياً
-MAX_TRIES_PER_RUN = 5       # حد الاختبار: لا يتجاوز الروابط الخمسة المحددة
-MAX_SUCCESSFUL_LINKS_PER_RUN = 5
+ACCOUNT_COUNT = 11
+MAX_ATTEMPTS_PER_PAIR = 3
+MAX_LINKS_PER_RUN = 5
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 "
@@ -36,7 +34,6 @@ def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
-# ══════════════ ملفات ══════════════
 def read_lines(path):
     if not os.path.exists(path):
         return []
@@ -50,22 +47,39 @@ def append_lines(path, lines):
             f.write(line + "\n")
 
 
-def load_attempts():
-    if not os.path.exists(ATTEMPTS_PATH):
+def load_json(path):
+    if not os.path.exists(path):
         return {}
     try:
-        with open(ATTEMPTS_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
+        with open(path, "r", encoding="utf-8") as f:
+            value = json.load(f)
+        return value if isinstance(value, dict) else {}
     except (ValueError, OSError):
         return {}
 
 
-def save_attempts(data):
-    with open(ATTEMPTS_PATH, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+def save_json(path, value):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(value, f, ensure_ascii=False, indent=2)
+        f.write("\n")
 
 
-# ══════════════ السحب ══════════════
+def load_accounts(environ):
+    accounts = []
+    missing = []
+    for number in range(1, ACCOUNT_COUNT + 1):
+        username = environ.get(f"SITE_USERNAME_{number}", "").strip()
+        password = environ.get(f"SITE_PASSWORD_{number}", "")
+        if not username:
+            missing.append(f"SITE_USERNAME_{number}")
+        if not password:
+            missing.append(f"SITE_PASSWORD_{number}")
+        accounts.append((number, username, password))
+    if missing:
+        raise ValueError("Missing required secrets: " + ", ".join(missing))
+    return accounts
+
+
 def fetch_links():
     """روابط المنشورات الظاهرة في القناة، من الأقدم للأحدث."""
     url = f"https://t.me/s/{TARGET_CHANNEL}"
@@ -81,96 +95,132 @@ def pull_once():
     first_run = not os.path.exists(PROCESSED_PATH)
     discovered = fetch_links()
     if not discovered:
-        log("⏹️ لم يتم العثور على منشورات في الصفحة.")
+        log("لم يتم العثور على منشورات في الصفحة.")
         return
 
     processed = set(read_lines(PROCESSED_PATH))
-    new_links = [l for l in discovered if l not in processed]
+    new_links = [link for link in discovered if link not in processed]
     if not new_links:
-        log("🔎 لا توجد منشورات جديدة.")
+        log("لا توجد منشورات جديدة.")
         return
 
     if first_run:
-        # أول تشغيل: الأحدث فقط، وباقي ما في الصفحة يُسجَّل كمعالج دون تنفيذ
         append_lines(LINKS_PATH, [new_links[-1]])
         append_lines(PROCESSED_PATH, new_links)
-        log(f"🆕 أول تشغيل، أُضيف أحدث رابط فقط: {new_links[-1]}")
-        if len(new_links) > 1:
-            log(f"ℹ️ تم تجاهل {len(new_links) - 1} منشور أقدم.")
+        log(f"أول تشغيل: أُضيف أحدث رابط فقط: {new_links[-1]}")
         return
 
-    # الأشغال العادية: كل الجديد بالترتيب (الأقدم أولاً)
     append_lines(LINKS_PATH, new_links)
     append_lines(PROCESSED_PATH, new_links)
-    log(f"✨ أُضيف {len(new_links)} رابط جديد إلى الطابور.")
+    log(f"أُضيف {len(new_links)} رابط جديد إلى الطابور.")
 
 
-def pending_links(attempts):
-    done = set(read_lines(DONE_PATH))
-    result = []
+def pair_key(account_number, link):
+    return f"{account_number}|{link}"
+
+
+def links_for_run(pair_done, attempts):
+    legacy_done = set(read_lines(LEGACY_DONE_PATH))
+    eligible = []
     for link in read_lines(LINKS_PATH):
-        if link in done:
+        if link in legacy_done or link in eligible:
             continue
-        if attempts.get(link, 0) >= MAX_ATTEMPTS_PER_LINK:
-            continue
-        if link not in result:
-            result.append(link)
-    return result
+        # لا نبدأ رابطًا جديدًا إلا إذا بقيت له محاولة متاحة لحساب واحد على الأقل.
+        unfinished = any(
+            pair_key(number, link) not in pair_done
+            and attempts.get(pair_key(number, link), 0) < MAX_ATTEMPTS_PER_PAIR
+            for number in range(1, ACCOUNT_COUNT + 1)
+        )
+        if unfinished:
+            eligible.append(link)
+        if len(eligible) >= MAX_LINKS_PER_RUN:
+            break
+    return eligible
 
 
-def run_browser_send(sender):
-    attempts = load_attempts()
-    queue = pending_links(attempts)
-    if not queue:
-        log("💤 الطابور فارغ، لا شيء للتنفيذ.")
+def process_account(account, links, pair_done, attempts):
+    number, username, password = account
+    results = {}
+    work = [
+        link for link in links
+        if pair_key(number, link) not in pair_done
+        and attempts.get(pair_key(number, link), 0) < MAX_ATTEMPTS_PER_PAIR
+    ]
+    if not work:
+        return number, results
+
+    try:
+        with BrowserSender(username, password) as sender:
+            for index, link in enumerate(work):
+                log(f"الحساب {number}: معالجة {link}")
+                status = sender(link)
+                results[link] = status
+                if status == "fatal":
+                    for pending in work[index + 1:]:
+                        results[pending] = "fatal"
+                    break
+    except Exception as error:
+        log(f"الحساب {number}: تعذر تشغيل المتصفح ({type(error).__name__}: {error})")
+        for link in work:
+            results.setdefault(link, "fail")
+    return number, results
+
+
+def run_parallel(accounts):
+    pair_done = load_json(PAIR_DONE_PATH)
+    attempts = load_json(PAIR_ATTEMPTS_PATH)
+    links = links_for_run(pair_done, attempts)
+    if not links:
+        log("لا توجد روابط معلقة للتنفيذ.")
         return 0
 
-    log(f"📋 في الطابور: {len(queue)} رابط.")
-    tries = 0
-    successes = 0
-    for link in queue:
-        if successes >= MAX_SUCCESSFUL_LINKS_PER_RUN or tries >= MAX_TRIES_PER_RUN:
-            break
-        tries += 1
-        log(f"معالجة: {link}")
-        status = sender(link)
+    log(f"بدء {len(accounts)} حسابًا بالتوازي على الروابط نفسها: {len(links)} رابطًا (حتى {len(accounts) * len(links)} طلبًا).")
+    results = {}
+    with ThreadPoolExecutor(max_workers=ACCOUNT_COUNT) as executor:
+        futures = [executor.submit(process_account, account, links, pair_done, attempts)
+                   for account in accounts]
+        for future in as_completed(futures):
+            number, account_results = future.result()
+            results[number] = account_results
 
-        if status == "ok":
-            append_lines(DONE_PATH, [link])
-            successes += 1
-            log(f"✅ نجاح {successes}/{MAX_SUCCESSFUL_LINKS_PER_RUN}.")
-            continue
-        if status == "fatal":
-            log("⏹️ توقف: تحقق من بيانات الدخول أو الرصيد.")
-            return 1
+    for number in range(1, ACCOUNT_COUNT + 1):
+        for link in links:
+            status = results.get(number, {}).get(link)
+            if status == "ok":
+                pair_done[pair_key(number, link)] = True
+            elif status in ("fail", "fatal"):
+                key = pair_key(number, link)
+                attempts[key] = attempts.get(key, 0) + 1
+                if attempts[key] >= MAX_ATTEMPTS_PER_PAIR:
+                    log(f"تم إيقاف إعادة الرابط {link} للحساب {number} بعد {MAX_ATTEMPTS_PER_PAIR} إخفاقات.")
 
-        attempts[link] = attempts.get(link, 0) + 1
-        save_attempts(attempts)
-        if attempts[link] >= MAX_ATTEMPTS_PER_LINK:
-            log(f"🚫 تم تخطي الرابط نهائياً بعد {MAX_ATTEMPTS_PER_LINK} محاولات فاشلة.")
+    save_json(PAIR_DONE_PATH, pair_done)
+    save_json(PAIR_ATTEMPTS_PATH, attempts)
 
-    log(f"اكتمل التشغيل: {successes} طلبات ناجحة من أصل {MAX_SUCCESSFUL_LINKS_PER_RUN} مستهدفة.")
-    return 0
+    completed = 0
+    for link in links:
+        if all(pair_key(number, link) in pair_done for number in range(1, ACCOUNT_COUNT + 1)):
+            completed += 1
+    log(f"انتهى التشغيل: اكتملت جميع الحسابات لـ {completed} من أصل {len(links)} روابط.")
+    if completed == len(links):
+        return 0
+    return 1
 
 
 def main():
     try:
-        account_number, username, password = select_rotating_account(os.environ, STATE_DIR)
-    except (OSError, ValueError) as error:
-        log(f"❌ تعذر اختيار حساب؛ تحقق من الأسرار الثلاثة وحالة account_rotation.json: {error}")
+        accounts = load_accounts(os.environ)
+    except ValueError as error:
+        log(f"تعذر بدء التشغيل؛ تحقق من أسرار الحسابات الـ11: {error}")
         return 1
 
-    log(f"🚀 بدء التشغيل | القناة: @{TARGET_CHANNEL} | الوضع: browser | الحساب رقم {account_number}")
-
+    log(f"بدء التشغيل المتوازي | القناة: @{TARGET_CHANNEL} | الحسابات: {ACCOUNT_COUNT}")
     try:
         pull_once()
-    except Exception as e:
-        log(f"❌ خطأ في السحب: {type(e).__name__}: {e}")
+    except Exception as error:
+        log(f"خطأ في سحب الروابط: {type(error).__name__}: {error}")
 
-    from browser_sender import BrowserSender
-
-    with BrowserSender(username, password) as sender:
-        return run_browser_send(sender)
+    return run_parallel(accounts)
 
 
 if __name__ == "__main__":
