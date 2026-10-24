@@ -8,7 +8,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 from browser_sender import BrowserSender
 
-# ══════════════ الإعدادات ══════════════
 ROOT = os.path.dirname(os.path.abspath(__file__))
 STATE_DIR = os.path.join(ROOT, "state")
 os.makedirs(STATE_DIR, exist_ok=True)
@@ -18,11 +17,12 @@ PROCESSED_PATH = os.path.join(STATE_DIR, "processed_links.txt")
 LEGACY_DONE_PATH = os.path.join(STATE_DIR, "done_links.txt")
 PAIR_DONE_PATH = os.path.join(STATE_DIR, "account_link_done.json")
 PAIR_ATTEMPTS_PATH = os.path.join(STATE_DIR, "account_link_attempts.json")
+PREVIOUS_BATCH_PATH = os.path.join(STATE_DIR, "previous_batch_links.json")
 
 TARGET_CHANNEL = "hasadalyoum"
 ACCOUNT_COUNT = 11
 MAX_ATTEMPTS_PER_PAIR = 3
-MAX_LINKS_PER_RUN = 5
+MAX_LINKS_PER_BATCH = 5
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 "
@@ -64,6 +64,17 @@ def save_json(path, value):
         f.write("\n")
 
 
+def load_previous_batch():
+    if not os.path.exists(PREVIOUS_BATCH_PATH):
+        return []
+    try:
+        with open(PREVIOUS_BATCH_PATH, "r", encoding="utf-8") as f:
+            value = json.load(f)
+        return value if isinstance(value, list) else []
+    except (ValueError, OSError):
+        return []
+
+
 def load_accounts(environ):
     accounts = []
     missing = []
@@ -81,7 +92,7 @@ def load_accounts(environ):
 
 
 def fetch_links():
-    """روابط المنشورات الظاهرة في القناة، من الأقدم للأحدث."""
+    """روابط المنشورات الظاهرة في القناة، من الأقدم إلى الأحدث."""
     url = f"https://t.me/s/{TARGET_CHANNEL}"
     response = requests.get(url, headers=HEADERS, timeout=30)
     if response.status_code != 200:
@@ -91,60 +102,56 @@ def fetch_links():
     return [f"https://t.me/{TARGET_CHANNEL}/{n}" for n in ids]
 
 
+def select_current_batch(discovered, processed, first_run=False):
+    """اختر حتى خمسة روابط جديدة؛ عند أول تشغيل تجاهل المنشورات الأقدم الظاهرة."""
+    new_links = [link for link in discovered if link not in processed]
+    if first_run:
+        return new_links[-MAX_LINKS_PER_BATCH:], set(new_links)
+    batch = new_links[:MAX_LINKS_PER_BATCH]
+    return batch, set(batch)
+
+
 def pull_once():
     first_run = not os.path.exists(PROCESSED_PATH)
     discovered = fetch_links()
     if not discovered:
         log("لم يتم العثور على منشورات في الصفحة.")
-        return
+        return []
 
     processed = set(read_lines(PROCESSED_PATH))
-    new_links = [link for link in discovered if link not in processed]
-    if not new_links:
-        log("لا توجد منشورات جديدة.")
-        return
+    current_batch, mark_processed = select_current_batch(
+        discovered, processed, first_run
+    )
+    if not current_batch:
+        log("لا توجد روابط جديدة.")
+        return []
 
-    if first_run:
-        append_lines(LINKS_PATH, [new_links[-1]])
-        append_lines(PROCESSED_PATH, new_links)
-        log(f"أول تشغيل: أُضيف أحدث رابط فقط: {new_links[-1]}")
-        return
-
-    append_lines(LINKS_PATH, new_links)
-    append_lines(PROCESSED_PATH, new_links)
-    log(f"أُضيف {len(new_links)} رابط جديد إلى الطابور.")
+    append_lines(LINKS_PATH, current_batch)
+    append_lines(PROCESSED_PATH, sorted(mark_processed))
+    log(f"أُضيفت {len(current_batch)} روابط جديدة لهذه الدفعة.")
+    return current_batch
 
 
 def pair_key(account_number, link):
     return f"{account_number}|{link}"
 
 
-def links_for_run(pair_done, attempts):
-    legacy_done = set(read_lines(LEGACY_DONE_PATH))
-    eligible = []
-    for link in read_lines(LINKS_PATH):
-        if link in legacy_done or link in eligible:
-            continue
-        # لا نبدأ رابطًا جديدًا إلا إذا بقيت له محاولة متاحة لحساب واحد على الأقل.
-        unfinished = any(
-            pair_key(number, link) not in pair_done
-            and attempts.get(pair_key(number, link), 0) < MAX_ATTEMPTS_PER_PAIR
-            for number in range(1, ACCOUNT_COUNT + 1)
-        )
-        if unfinished:
-            eligible.append(link)
-        if len(eligible) >= MAX_LINKS_PER_RUN:
-            break
-    return eligible
+def links_for_run(current_batch, previous_batch):
+    # السابقة أولًا ثم الجديدة؛ فكلا المجموعتين تُرسل في هذا التشغيل.
+    combined = list(dict.fromkeys(previous_batch + current_batch))
+    return combined[:2 * MAX_LINKS_PER_BATCH]
 
 
-def process_account(account, links, pair_done, attempts):
+def process_account(account, links, pair_done, attempts, forced_links):
     number, username, password = account
     results = {}
     work = [
         link for link in links
-        if pair_key(number, link) not in pair_done
-        and attempts.get(pair_key(number, link), 0) < MAX_ATTEMPTS_PER_PAIR
+        if link in forced_links
+        or (
+            pair_key(number, link) not in pair_done
+            and attempts.get(pair_key(number, link), 0) < MAX_ATTEMPTS_PER_PAIR
+        )
     ]
     if not work:
         return number, results
@@ -166,19 +173,30 @@ def process_account(account, links, pair_done, attempts):
     return number, results
 
 
-def run_parallel(accounts):
+def run_parallel(accounts, current_batch):
     pair_done = load_json(PAIR_DONE_PATH)
     attempts = load_json(PAIR_ATTEMPTS_PATH)
-    links = links_for_run(pair_done, attempts)
+    previous_batch = load_previous_batch()
+    links = links_for_run(current_batch, previous_batch)
     if not links:
-        log("لا توجد روابط معلقة للتنفيذ.")
+        log("لا توجد روابط جديدة أو من الدفعة السابقة للتنفيذ.")
+        save_json(PREVIOUS_BATCH_PATH, [])
         return 0
 
-    log(f"بدء {len(accounts)} حسابًا بالتوازي على الروابط نفسها: {len(links)} رابطًا (حتى {len(accounts) * len(links)} طلبًا).")
+    forced_links = set(previous_batch)
+    log(
+        f"بدء {len(accounts)} حسابًا بالتوازي على {len(links)} روابط: "
+        f"{len(current_batch)} جديدة + {len(set(previous_batch) & set(links))} من الدفعة السابقة "
+        f"(حتى {len(accounts) * len(links)} طلبًا)."
+    )
     results = {}
     with ThreadPoolExecutor(max_workers=ACCOUNT_COUNT) as executor:
-        futures = [executor.submit(process_account, account, links, pair_done, attempts)
-                   for account in accounts]
+        futures = [
+            executor.submit(
+                process_account, account, links, pair_done, attempts, forced_links
+            )
+            for account in accounts
+        ]
         for future in as_completed(futures):
             number, account_results = future.result()
             results[number] = account_results
@@ -186,25 +204,29 @@ def run_parallel(accounts):
     for number in range(1, ACCOUNT_COUNT + 1):
         for link in links:
             status = results.get(number, {}).get(link)
+            key = pair_key(number, link)
             if status == "ok":
-                pair_done[pair_key(number, link)] = True
-            elif status in ("fail", "fatal"):
-                key = pair_key(number, link)
+                pair_done[key] = True
+            elif status in ("fail", "fatal") and link not in forced_links:
                 attempts[key] = attempts.get(key, 0) + 1
                 if attempts[key] >= MAX_ATTEMPTS_PER_PAIR:
                     log(f"تم إيقاف إعادة الرابط {link} للحساب {number} بعد {MAX_ATTEMPTS_PER_PAIR} إخفاقات.")
 
     save_json(PAIR_DONE_PATH, pair_done)
     save_json(PAIR_ATTEMPTS_PATH, attempts)
+    # الدفعة الجديدة لهذا التشغيل تصبح الدفعة السابقة للدورة التالية.
+    # إذا لم توجد روابط جديدة، لا نكرر المجموعة القديمة بلا نهاية.
+    save_json(PREVIOUS_BATCH_PATH, current_batch)
 
-    completed = 0
-    for link in links:
-        if all(pair_key(number, link) in pair_done for number in range(1, ACCOUNT_COUNT + 1)):
-            completed += 1
-    log(f"انتهى التشغيل: اكتملت جميع الحسابات لـ {completed} من أصل {len(links)} روابط.")
-    if completed == len(links):
-        return 0
-    return 1
+    successful_pairs = sum(
+        1
+        for number in range(1, ACCOUNT_COUNT + 1)
+        for link in links
+        if results.get(number, {}).get(link) == "ok"
+    )
+    expected_pairs = ACCOUNT_COUNT * len(links)
+    log(f"انتهى التشغيل: نجح {successful_pairs} من أصل {expected_pairs} أزواج حساب/رابط.")
+    return 0 if successful_pairs == expected_pairs else 1
 
 
 def main():
@@ -216,11 +238,12 @@ def main():
 
     log(f"بدء التشغيل المتوازي | القناة: @{TARGET_CHANNEL} | الحسابات: {ACCOUNT_COUNT}")
     try:
-        pull_once()
+        current_batch = pull_once()
     except Exception as error:
         log(f"خطأ في سحب الروابط: {type(error).__name__}: {error}")
+        current_batch = []
 
-    return run_parallel(accounts)
+    return run_parallel(accounts, current_batch)
 
 
 if __name__ == "__main__":
