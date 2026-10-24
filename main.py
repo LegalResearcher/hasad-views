@@ -22,7 +22,8 @@ SERVICE_ID = "9336"
 QUANTITY = "100"
 
 MAX_ATTEMPTS_PER_LINK = 3   # بعد 3 إخفاقات يُتخطى الرابط نهائياً
-MAX_TRIES_PER_RUN = 3       # أقصى عدد طلبات في التشغيل الواحد
+MAX_TRIES_PER_RUN = 5       # حد الاختبار: لا يتجاوز الروابط الخمسة المحددة
+MAX_SUCCESSFUL_LINKS_PER_RUN = 5
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 "
@@ -125,8 +126,9 @@ def run_browser_send(sender):
 
     log(f"📋 في الطابور: {len(queue)} رابط.")
     tries = 0
+    successes = 0
     for link in queue:
-        if tries >= MAX_TRIES_PER_RUN:
+        if successes >= MAX_SUCCESSFUL_LINKS_PER_RUN or tries >= MAX_TRIES_PER_RUN:
             break
         tries += 1
         log(f"معالجة: {link}")
@@ -134,7 +136,9 @@ def run_browser_send(sender):
 
         if status == "ok":
             append_lines(DONE_PATH, [link])
-            return 0  # رابط ناجح واحد لكل تشغيل
+            successes += 1
+            log(f"✅ نجاح {successes}/{MAX_SUCCESSFUL_LINKS_PER_RUN}.")
+            continue
         if status == "fatal":
             log("⏹️ توقف: تحقق من بيانات الدخول أو الرصيد.")
             return 1
@@ -144,7 +148,7 @@ def run_browser_send(sender):
         if attempts[link] >= MAX_ATTEMPTS_PER_LINK:
             log(f"🚫 تم تخطي الرابط نهائياً بعد {MAX_ATTEMPTS_PER_LINK} محاولات فاشلة.")
 
-    log("⚠️ لم ينجح أي طلب في هذا التشغيل.")
+    log(f"اكتمل التشغيل: {successes} طلبات ناجحة من أصل {MAX_SUCCESSFUL_LINKS_PER_RUN} مستهدفة.")
     return 0
 
 
