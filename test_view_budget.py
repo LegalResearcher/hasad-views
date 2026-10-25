@@ -7,7 +7,9 @@ from unittest.mock import patch
 
 from view_budget import (
     MAX_TOTAL_VIEWS,
+    VIEW_SAFEGUARDS_ENABLED,
     ViewBudget,
+    configured_total_limit,
     fetch_current_views,
     fetch_view_counts,
     parse_view_count,
@@ -60,6 +62,17 @@ class ViewBudgetTests(unittest.TestCase):
         self.assertEqual(budget.reserve(link, 10_350), 50)
         self.assertEqual(budget.reserve(link, 10_350), 0)
         self.assertEqual(MAX_TOTAL_VIEWS, 10_400)
+
+    def test_temporary_workflow_override_disables_total_limit_only(self):
+        link = "https://t.me/hasadalyoum/1-disabled"
+        self.assertFalse(VIEW_SAFEGUARDS_ENABLED)
+        self.assertIsNone(configured_total_limit())
+        budget = self.budget(max_total=configured_total_limit())
+        self.assertEqual(budget.reserve(link, 50_000), 100)
+        self.assertEqual(budget.reserve(link, 50_000), 100)
+        entry = self.read_state()[link]
+        self.assertEqual(entry["max_observed"], 50_000)
+        self.assertEqual(entry["reserved"], 200)
 
     def test_concurrent_accounts_and_budget_instances_cannot_double_reserve(self):
         link = "https://t.me/hasadalyoum/2"

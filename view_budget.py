@@ -15,6 +15,12 @@ MAX_TOTAL_VIEWS = 10_400
 MAX_ORDER_QUANTITY = 100
 LEGACY_ACCOUNT_COUNT = 30
 ACTIVE_ORDER_COOLDOWN_SECONDS = 60 * 60
+VIEW_SAFEGUARDS_ENABLED = False
+
+
+def configured_total_limit():
+    """Return the post ceiling only when the temporary safeguards are enabled."""
+    return MAX_TOTAL_VIEWS if VIEW_SAFEGUARDS_ENABLED else None
 
 
 class ActiveOrderDeferred(RuntimeError):
@@ -135,6 +141,10 @@ class ViewBudget:
         self.legacy_success_counts_path = legacy_success_counts_path
         self.max_total = max_total
         self.max_order = max_order
+        if (max_total is not None
+                and (not isinstance(max_total, int) or isinstance(max_total, bool)
+                     or max_total < 0)):
+            raise ValueError("max_total must be a non-negative integer or None")
         if (not isinstance(active_order_cooldown, int)
                 or isinstance(active_order_cooldown, bool)
                 or active_order_cooldown <= 0):
@@ -209,7 +219,9 @@ class ViewBudget:
             except OSError:
                 return self.max_total
 
-        return min(self.max_total, order_count * self.max_order)
+        legacy_reserved = order_count * self.max_order
+        return (min(self.max_total, legacy_reserved)
+                if self.max_total is not None else legacy_reserved)
 
     def _save(self, state):
         directory = os.path.dirname(os.path.abspath(self.path))
@@ -263,8 +275,11 @@ class ViewBudget:
                     raise ActiveOrderDeferred(deferred_until)
                 entry.pop("active_order_until", None)
 
-            remaining = max(0, self.max_total - max_observed - reserved)
-            quantity = min(self.max_order, remaining)
+            if self.max_total is None:
+                quantity = self.max_order
+            else:
+                remaining = max(0, self.max_total - max_observed - reserved)
+                quantity = min(self.max_order, remaining)
             if quantity:
                 entry["reserved"] = reserved + quantity
             state[link] = entry
