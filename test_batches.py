@@ -17,22 +17,22 @@ from main import (
 
 
 class BatchSelectionTests(unittest.TestCase):
-    def test_main_workflow_loads_all_sixteen_accounts(self):
+    def test_main_workflow_loads_all_thirty_accounts(self):
         environ = {}
-        for number in range(1, 17):
+        for number in range(1, 31):
             environ[f"SITE_USERNAME_{number}"] = f"user-{number}"
             environ[f"SITE_PASSWORD_{number}"] = f"password-{number}"
         accounts = load_accounts(environ)
-        self.assertEqual(ACCOUNT_COUNT, 16)
-        self.assertEqual(len(accounts), 16)
-        self.assertEqual(accounts[-1], (16, "user-16", "password-16"))
+        self.assertEqual(ACCOUNT_COUNT, 30)
+        self.assertEqual(len(accounts), 30)
+        self.assertEqual(accounts[-1], (30, "user-30", "password-30"))
 
-    def test_main_workflow_requires_sixteenth_account_secrets(self):
+    def test_main_workflow_requires_thirtieth_account_secrets(self):
         environ = {}
-        for number in range(1, 16):
+        for number in range(1, 30):
             environ[f"SITE_USERNAME_{number}"] = f"user-{number}"
             environ[f"SITE_PASSWORD_{number}"] = f"password-{number}"
-        with self.assertRaisesRegex(ValueError, "SITE_USERNAME_16, SITE_PASSWORD_16"):
+        with self.assertRaisesRegex(ValueError, "SITE_USERNAME_30, SITE_PASSWORD_30"):
             load_accounts(environ)
 
     def test_selects_all_new_links_in_order_without_a_five_link_cap(self):

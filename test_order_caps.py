@@ -72,23 +72,9 @@ class MainWorkflowBudgetTests(unittest.TestCase):
         self.assertEqual(self.calls, [(self.link, 50)])
 
 
-class AccountCountOptionTests(unittest.TestCase):
-    def test_default_and_full_run_use_sixteen_accounts(self):
-        self.assertEqual(main.parse_account_count(None), 16)
-        self.assertEqual(main.parse_account_count(""), 16)
-        self.assertEqual(main.parse_account_count("16"), 16)
-
-    def test_one_selects_only_the_first_account(self):
-        self.assertEqual(main.parse_account_count("1"), 1)
-        env = {"SITE_USERNAME_1": "user-1", "SITE_PASSWORD_1": "password-1"}
-        with patch.object(main, "ACCOUNT_COUNT", 1):
-            self.assertEqual(main.load_accounts(env), [(1, "user-1", "password-1")])
-
-    def test_rejects_unsupported_account_counts(self):
-        for value in ("0", "2", "15", "17", "invalid"):
-            with self.subTest(value=value):
-                with self.assertRaisesRegex(ValueError, "1 or 16"):
-                    main.parse_account_count(value)
+class AccountCountTests(unittest.TestCase):
+    def test_main_default_is_thirty_accounts(self):
+        self.assertEqual(main.ACCOUNT_COUNT, 30)
 
 
 if __name__ == "__main__":

@@ -129,7 +129,7 @@ class ActiveOrderBudgetTests(unittest.TestCase):
         budget.reserve(self.link, 1_000)
         budget.record_active_order(self.link)
         environ = {"TARGET_LINK": self.link}
-        for number in range(1, 17):
+        for number in range(1, 31):
             environ[f"SITE_USERNAME_{number}"] = f"user-{number}"
             environ[f"SITE_PASSWORD_{number}"] = f"password-{number}"
 
@@ -149,7 +149,7 @@ class ActiveOrderBudgetTests(unittest.TestCase):
 
     def test_manual_retry_does_not_mark_partial_active_order_as_done(self):
         environ = {"TARGET_LINK": self.link}
-        for number in range(1, 17):
+        for number in range(1, 31):
             environ[f"SITE_USERNAME_{number}"] = f"user-{number}"
             environ[f"SITE_PASSWORD_{number}"] = f"password-{number}"
 
@@ -182,7 +182,7 @@ class ActiveOrderWorkflowOutcomeTests(unittest.TestCase):
     def test_unreadable_counter_is_reported_separately_and_does_not_fail(self):
         link = "https://t.me/hasadalyoum/12345"
         results = {1: {link: "ok"}}
-        results.update({number: {link: "view_unknown"} for number in range(2, 17)})
+        results.update({number: {link: "view_unknown"} for number in range(2, 31)})
 
         with patch.object(main, "log") as mocked_log:
             self.assertEqual(main.summarize_run_results(results, [link]), 0)
@@ -190,7 +190,7 @@ class ActiveOrderWorkflowOutcomeTests(unittest.TestCase):
         messages = " ".join(call.args[0] for call in mocked_log.call_args_list)
         self.assertIn("نجح 1 من أصل 1 أزواج حساب/رابط", messages)
         self.assertIn(
-            "تخطّي بسبب تعذر قراءة العداد: 15 زوج حساب/رابط؛ عدد الروابط المتأثرة 1",
+            "تخطّي بسبب تعذر قراءة العداد: 29 زوج حساب/رابط؛ عدد الروابط المتأثرة 1",
             messages,
         )
 
