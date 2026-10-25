@@ -5,7 +5,15 @@ import unittest
 # Keep these unit tests independent of Playwright/browser installation.
 sys.modules.setdefault("browser_sender", types.SimpleNamespace(BrowserSender=object))
 
-from main import ACCOUNT_COUNT, links_for_run, load_accounts, select_current_batch
+from main import (
+    ACCOUNT_COUNT,
+    links_for_run,
+    load_accounts,
+    no_new_group_count,
+    next_no_new_group_index,
+    select_current_batch,
+    select_no_new_batches,
+)
 
 
 class BatchSelectionTests(unittest.TestCase):
@@ -61,6 +69,34 @@ class BatchSelectionTests(unittest.TestCase):
         oldest = [f"oldest-{n}" for n in range(1, 6)]
         self.assertEqual(links_for_run([], [newest, middle, oldest]),
                          newest + middle + oldest)
+
+    def test_no_new_runs_rotate_older_batch_pairs_and_keep_newest_fixed(self):
+        history = [[f"batch-{number}"] for number in range(10)]
+        self.assertEqual(no_new_group_count(history), 5)
+        expected = [
+            ["batch-0", "batch-1", "batch-2"],
+            ["batch-0", "batch-3", "batch-4"],
+            ["batch-0", "batch-5", "batch-6"],
+            ["batch-0", "batch-7", "batch-8"],
+            ["batch-0", "batch-9"],
+        ]
+        for index, selected in enumerate(expected):
+            self.assertEqual(select_no_new_batches(history, index), [[link] for link in selected])
+        self.assertEqual(select_no_new_batches(history, 5), [["batch-0"], ["batch-1"], ["batch-2"]])
+        self.assertEqual(next_no_new_group_index(history, 3), 4)
+        self.assertEqual(next_no_new_group_index(history, 4), 0)
+
+    def test_rotation_uses_legacy_archive_only_as_fifteen_link_backfill(self):
+        history = [[f"batch-{number}"] for number in range(10)]
+        archive = [f"legacy-{number}" for number in range(1, 30)]
+        first = links_for_run([], history, archive, group_index=0)
+        second = links_for_run([], history, archive, group_index=1)
+        self.assertEqual(len(first), 15)
+        self.assertEqual(len(second), 15)
+        self.assertEqual(first[:3], ["batch-0", "batch-1", "batch-2"])
+        self.assertEqual(second[:3], ["batch-0", "batch-3", "batch-4"])
+        self.assertNotIn("batch-1", second)
+        self.assertNotIn("batch-2", second)
 
     def test_no_new_links_backfills_from_archive_to_fifteen(self):
         newest = [f"newest-{n}" for n in range(1, 4)]

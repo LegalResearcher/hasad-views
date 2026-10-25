@@ -18,6 +18,7 @@ LEGACY_DONE_PATH = os.path.join(STATE_DIR, "done_links.txt")
 PAIR_DONE_PATH = os.path.join(STATE_DIR, "account_link_done.json")
 PAIR_ATTEMPTS_PATH = os.path.join(STATE_DIR, "account_link_attempts.json")
 PREVIOUS_BATCH_PATH = os.path.join(STATE_DIR, "previous_batch_links.json")
+NO_NEW_BATCH_CURSOR_PATH = os.path.join(STATE_DIR, "no_new_batch_cursor.json")
 
 TARGET_CHANNEL = "hasadalyoum"
 ACCOUNT_COUNT = 16
@@ -75,7 +76,7 @@ def load_previous_batches():
         # Migrate the previous flat-list format to a list of batches.
         if value and all(isinstance(link, str) for link in value):
             return [value]
-        return [batch for batch in value if isinstance(batch, list)][:3]
+        return [batch for batch in value if isinstance(batch, list)]
     except (ValueError, OSError):
         return []
 
@@ -135,15 +136,56 @@ def pair_key(account_number, link):
     return f"{account_number}|{link}"
 
 
-def links_for_run(current_batch, previous_batches, archived_links=()):
-    # Include two previous batches with new links, or three previous batches
-    # without new links; backfill the latter from the archive to at least 15.
-    selected_previous = previous_batches[:2] if current_batch else previous_batches[:3]
+def no_new_group_count(previous_batches):
+    older_batch_count = max(0, len(previous_batches) - 1)
+    return max(1, (older_batch_count + 1) // 2)
+
+
+def next_no_new_group_index(previous_batches, group_index):
+    return (group_index + 1) % no_new_group_count(previous_batches)
+
+
+def select_no_new_batches(previous_batches, group_index=0):
+    """Keep the newest batch fixed and rotate through older batches in pairs."""
+    if not previous_batches:
+        return []
+    if len(previous_batches) == 1:
+        return previous_batches[:1]
+
+    group_count = no_new_group_count(previous_batches)
+    group_index = group_index % group_count
+    start = 1 + (group_index * 2)
+    return [previous_batches[0]] + previous_batches[start:start + 2]
+
+
+def current_no_new_group_index(previous_batches):
+    state = load_json(NO_NEW_BATCH_CURSOR_PATH)
+    index = state.get("next_group", 0)
+    if not isinstance(index, int) or isinstance(index, bool) or index < 0:
+        index = 0
+    return index % no_new_group_count(previous_batches)
+
+
+def links_for_run(current_batch, previous_batches, archived_links=(), group_index=0):
+    # New links pair with the two latest batches. With no new links, keep the
+    # latest batch fixed and rotate pairs of older batches; use legacy archive
+    # links only to meet the minimum of 15.
+    selected_previous = (
+        previous_batches[:2]
+        if current_batch
+        else select_no_new_batches(previous_batches, group_index)
+    )
     combined = list(dict.fromkeys(
         current_batch + [link for batch in selected_previous for link in batch]
     ))
     if not current_batch:
-        for link in reversed(archived_links):
+        known_batch_links = {
+            link for batch in previous_batches for link in batch
+        }
+        legacy_archive = [
+            link for link in archived_links if link not in known_batch_links
+        ]
+        for link in reversed(legacy_archive):
             if link not in combined:
                 combined.append(link)
             if len(combined) >= MIN_REPEATED_LINKS_WITHOUT_NEW:
@@ -187,12 +229,17 @@ def run_parallel(accounts, current_batch):
     attempts = load_json(PAIR_ATTEMPTS_PATH)
     previous_batches = load_previous_batches()
     archive = read_lines(LINKS_PATH)
-    links = links_for_run(current_batch, previous_batches, archive)
+    group_index = current_no_new_group_index(previous_batches)
+    links = links_for_run(current_batch, previous_batches, archive, group_index)
     if not links:
         log("لا توجد روابط جديدة أو من الدفعة السابقة للتنفيذ.")
         return 0
 
-    selected_previous = previous_batches[:2] if current_batch else previous_batches[:3]
+    selected_previous = (
+        previous_batches[:2]
+        if current_batch
+        else select_no_new_batches(previous_batches, group_index)
+    )
     forced_links = (
         {link for batch in selected_previous for link in batch}
         if current_batch else set(links)
@@ -229,13 +276,14 @@ def run_parallel(accounts, current_batch):
 
     save_json(PAIR_DONE_PATH, pair_done)
     save_json(PAIR_ATTEMPTS_PATH, attempts)
-    # Keep the current batch plus the two newest preceding batches so the
-    # next run can repeat three prior batches if no new links appear.
-    updated_batches = (
-        [current_batch] + previous_batches[:2]
-        if current_batch else previous_batches[:3]
-    )
+    # Keep every verifiable batch so no-new runs can rotate through history.
+    updated_batches = [current_batch] + previous_batches if current_batch else previous_batches
     save_json(PREVIOUS_BATCH_PATH, updated_batches)
+    next_group = (
+        0
+        if current_batch else next_no_new_group_index(previous_batches, group_index)
+    )
+    save_json(NO_NEW_BATCH_CURSOR_PATH, {"next_group": next_group})
 
     successful_pairs = sum(
         1
