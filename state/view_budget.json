@@ -625,7 +625,7 @@
   },
   "https://t.me/hasadalyoum/24144": {
     "baseline": 2,
-    "max_observed": 160,
+    "max_observed": 164,
     "reserved": 3200,
     "last_active_order_at": 1792936853,
     "active_order_until": 1792940453,
@@ -633,6 +633,35 @@
     "last_active_order_account": 1
   },
   "https://t.me/hasadalyoum/24145": {
+    "baseline": 1,
+    "max_observed": 70,
+    "reserved": 3200,
+    "last_active_order_at": 1792938140,
+    "active_order_until": 1792941740,
+    "active_order_count": 6,
+    "last_active_order_account": 16
+  },
+  "https://t.me/hasadalyoum/24146": {
+    "baseline": 5,
+    "max_observed": 5,
+    "reserved": 1600
+  },
+  "https://t.me/hasadalyoum/24147": {
+    "baseline": 4,
+    "max_observed": 4,
+    "reserved": 1600
+  },
+  "https://t.me/hasadalyoum/24148": {
+    "baseline": 4,
+    "max_observed": 4,
+    "reserved": 1600
+  },
+  "https://t.me/hasadalyoum/24149": {
+    "baseline": 4,
+    "max_observed": 4,
+    "reserved": 1600
+  },
+  "https://t.me/hasadalyoum/24150": {
     "baseline": 1,
     "max_observed": 1,
     "reserved": 1600
