@@ -4,6 +4,7 @@ import os
 import re
 import tempfile
 import threading
+import time
 from contextlib import contextmanager
 from fcntl import LOCK_EX, LOCK_UN, flock
 from html.parser import HTMLParser
@@ -13,6 +14,15 @@ import requests
 MAX_TOTAL_VIEWS = 10_400
 MAX_ORDER_QUANTITY = 100
 LEGACY_ACCOUNT_COUNT = 16
+ACTIVE_ORDER_COOLDOWN_SECONDS = 60 * 60
+
+
+class ActiveOrderDeferred(RuntimeError):
+    """Raised when a post is still inside its persisted active-order cooldown."""
+
+    def __init__(self, deferred_until):
+        self.deferred_until = int(deferred_until)
+        super().__init__(f"Active order cooldown until {self.deferred_until}")
 
 
 class _TargetViewParser(HTMLParser):
@@ -116,7 +126,8 @@ class ViewBudget:
 
     def __init__(self, path, legacy_pair_done_path=None, legacy_done_links_path=None,
                  legacy_success_counts_path=None, max_total=MAX_TOTAL_VIEWS,
-                 max_order=MAX_ORDER_QUANTITY):
+                 max_order=MAX_ORDER_QUANTITY,
+                 active_order_cooldown=ACTIVE_ORDER_COOLDOWN_SECONDS):
         self.path = path
         self.lock_path = path + ".lock"
         self.legacy_pair_done_path = legacy_pair_done_path
@@ -124,6 +135,11 @@ class ViewBudget:
         self.legacy_success_counts_path = legacy_success_counts_path
         self.max_total = max_total
         self.max_order = max_order
+        if (not isinstance(active_order_cooldown, int)
+                or isinstance(active_order_cooldown, bool)
+                or active_order_cooldown <= 0):
+            raise ValueError("active_order_cooldown must be a positive integer")
+        self.active_order_cooldown = active_order_cooldown
         self.lock = threading.Lock()
 
     @contextmanager
@@ -209,11 +225,12 @@ class ViewBudget:
             if os.path.exists(temp_path):
                 os.unlink(temp_path)
 
-    def reserve(self, link, current_views):
-        """Reserve one order up to 100; return 0 when the post has no remaining budget."""
+    def reserve(self, link, current_views, now=None):
+        """Reserve one order or raise ActiveOrderDeferred during an active cooldown."""
         if (not isinstance(current_views, int) or isinstance(current_views, bool)
                 or current_views < 0):
             raise ValueError("A valid current view count is required")
+        now = int(time.time()) if now is None else int(now)
         with self._exclusive_lock():
             state = self._read()
             entry = state.get(link)
@@ -234,14 +251,54 @@ class ViewBudget:
                 raise ValueError(f"Invalid view budget counters for {link}")
 
             max_observed = max(max_observed, current_views)
+            entry["max_observed"] = max_observed
+            deferred_until = entry.get("active_order_until")
+            if deferred_until is not None:
+                if (not isinstance(deferred_until, int)
+                        or isinstance(deferred_until, bool) or deferred_until < 0):
+                    raise ValueError(f"Invalid active-order deferral for {link}")
+                if deferred_until > now:
+                    state[link] = entry
+                    self._save(state)
+                    raise ActiveOrderDeferred(deferred_until)
+                entry.pop("active_order_until", None)
+
             remaining = max(0, self.max_total - max_observed - reserved)
             quantity = min(self.max_order, remaining)
-            entry["max_observed"] = max_observed
             if quantity:
                 entry["reserved"] = reserved + quantity
             state[link] = entry
             self._save(state)
             return quantity
+
+    def record_active_order(self, link, account_number=None, now=None):
+        """Persist a one-hour link-level pause without releasing the reserved amount."""
+        now = int(time.time()) if now is None else int(now)
+        with self._exclusive_lock():
+            state = self._read()
+            entry = state.get(link)
+            if not isinstance(entry, dict):
+                raise ValueError(f"No budget reservation exists for active order {link}")
+            deferred_until = entry.get("active_order_until", 0)
+            if (not isinstance(deferred_until, int) or isinstance(deferred_until, bool)
+                    or deferred_until < 0):
+                raise ValueError(f"Invalid active-order deferral for {link}")
+            count = entry.get("active_order_count", 0)
+            if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+                raise ValueError(f"Invalid active-order count for {link}")
+            entry["last_active_order_at"] = now
+            entry["active_order_until"] = max(
+                deferred_until, now + self.active_order_cooldown
+            )
+            entry["active_order_count"] = count + 1
+            if account_number is not None:
+                if (not isinstance(account_number, int)
+                        or isinstance(account_number, bool) or account_number < 1):
+                    raise ValueError("account_number must be a positive integer")
+                entry["last_active_order_account"] = account_number
+            state[link] = entry
+            self._save(state)
+            return entry["active_order_until"]
 
 
 def fetch_view_counts(links, channel="hasadalyoum", max_workers=8):

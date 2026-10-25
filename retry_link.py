@@ -1,10 +1,16 @@
 import os
 import re
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from browser_sender import BrowserSender
-from view_budget import MAX_TOTAL_VIEWS, ViewBudget, fetch_current_views
+from view_budget import (
+    ActiveOrderDeferred,
+    MAX_TOTAL_VIEWS,
+    ViewBudget,
+    fetch_current_views,
+)
 
 ACCOUNT_COUNT = 16
 LINK_PATTERN = re.compile(r"^https://t\.me/hasadalyoum/\d+$")
@@ -71,6 +77,22 @@ def process_link(scheduled, link):
     return results
 
 
+def deferred_until_text(timestamp):
+    return time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(timestamp))
+
+
+def summarize_retry_results(results, scheduled_count):
+    active_statuses = {"active_order", "active_order_wait"}
+    successful = sum(status == "ok" for status in results.values())
+    deferred = sum(status in active_statuses for status in results.values())
+    expected = scheduled_count - deferred
+    log(
+        f"انتهى إعادة الرابط: نجح {successful} من أصل {expected} طلبات متوقعة؛ "
+        f"مؤجل بسبب طلب نشط {deferred}."
+    )
+    return 0 if len(results) == scheduled_count and successful == expected else 1
+
+
 def main():
     link = os.environ.get("TARGET_LINK", "").strip()
     if not LINK_PATTERN.fullmatch(link):
@@ -93,7 +115,14 @@ def main():
         )
         scheduled = []
         for account in accounts:
-            quantity = budget.reserve(link, current_views)
+            try:
+                quantity = budget.reserve(link, current_views)
+            except ActiveOrderDeferred as error:
+                log(
+                    f"الرابط مؤجل بسبب طلب نشط حتى "
+                    f"{deferred_until_text(error.deferred_until)}؛ لم يُرسل طلب جديد."
+                )
+                return 0
             if quantity:
                 scheduled.append((account, quantity))
     except Exception as error:
@@ -106,13 +135,33 @@ def main():
     planned = ", ".join(f"{account[0]}:{quantity}" for account, quantity in scheduled)
     log(f"الحجز قبل الإرسال: {link} | {len(scheduled)} طلبات | الحساب:الكمية {planned}")
     results = process_link(scheduled, link)
+    for number, status in list(results.items()):
+        if status == "active_order":
+            try:
+                deferred_until = budget.record_active_order(
+                    link, account_number=number
+                )
+            except Exception as error:
+                results[number] = "budget_error"
+                log(
+                    f"الحساب {number}: تعذر حفظ تأجيل الطلب النشط: "
+                    f"{type(error).__name__}: {error}"
+                )
+            else:
+                log(
+                    f"الحساب {number}: أُجّل الرابط بسبب طلب نشط حتى "
+                    f"{deferred_until_text(deferred_until)}."
+                )
     successful = sum(status == "ok" for status in results.values())
-    log(f"انتهى إعادة الرابط: نجح {successful} من أصل {len(scheduled)} طلبات مجدولة.")
+    outcome = summarize_retry_results(results, len(scheduled))
 
-    # Preserve the previous global completion marker if at least one order was accepted.
-    if successful:
+    # A deferred active order means this link is not fully resolved yet.
+    if successful and not any(
+        status in ("active_order", "active_order_wait")
+        for status in results.values()
+    ):
         mark_done(link)
-    return 0 if successful == len(scheduled) else 1
+    return outcome
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@ import os
 import re
 
 from playwright.sync_api import sync_playwright
+from provider_response import classify_provider_message
 
 SITE_URL = os.environ.get("SITE_URL", "https://prince.services")
 CATEGORY_TEXT = "خدمات مجانية"
@@ -162,6 +163,23 @@ class BrowserSender:
             self.page.wait_for_timeout(500)
         return None
 
+    def _visible_alert_message(self):
+        alerts = self.page.locator(".alert, [role='alert']")
+        try:
+            for index in range(alerts.count()):
+                alert = alerts.nth(index)
+                try:
+                    if not alert.is_visible():
+                        continue
+                    message = alert.inner_text().strip().replace("\n", " ")
+                    if message:
+                        return message[:240]
+                except Exception:
+                    continue
+        except Exception:
+            return ""
+        return ""
+
     def __call__(self, link, quantity=QUANTITY):
         p = self.page
         try:
@@ -216,19 +234,25 @@ class BrowserSender:
                         return body.includes(text)
                           || body.includes('تم الطلب')
                           || body.includes('رقم الطلب')
+                          || (body.includes('طلب نشط') && body.includes('رابط'))
+                          || (/active order/i.test(body) && /link|url/i.test(body))
                           || !!document.querySelector('.alert-success');
                     }""",
                     arg=SUCCESS_TEXT,
                     timeout=30000,
                 )
             except Exception:
-                alerts = p.locator(".alert, [role='alert']")
-                message = ""
-                if alerts.count():
-                    message = alerts.first.inner_text().strip().replace("\n", " ")[:240]
+                message = self._visible_alert_message()
+                if classify_provider_message(message) == "active_order":
+                    log(f"تأجيل الرابط لوجود طلب نشط لدى المزوّد: {link}")
+                    return "active_order"
                 log(f"لم تظهر نتيجة نجاح بعد التأكيد: {message or 'لا توجد رسالة'}")
                 return "fail"
 
+            message = self._visible_alert_message()
+            if classify_provider_message(message) == "active_order":
+                log(f"تأجيل الرابط لوجود طلب نشط لدى المزوّد: {link}")
+                return "active_order"
             body = p.inner_text("body")
             order_match = re.search(r"الرقم\s*:?[\s]*(\d+)|(\d+)\s*:?[\s]*الرقم", body)
             if order_match:
