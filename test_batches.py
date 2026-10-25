@@ -37,10 +37,12 @@ class BatchSelectionTests(unittest.TestCase):
         self.assertEqual(links_for_run(current, [previous, older]),
                          current + previous + older)
 
-    def test_no_new_links_repeats_both_previous_batches(self):
+    def test_no_new_links_repeats_three_previous_batches(self):
         newest = [f"newest-{n}" for n in range(1, 6)]
-        older = [f"older-{n}" for n in range(1, 6)]
-        self.assertEqual(links_for_run([], [newest, older]), newest + older)
+        middle = [f"middle-{n}" for n in range(1, 6)]
+        oldest = [f"oldest-{n}" for n in range(1, 6)]
+        self.assertEqual(links_for_run([], [newest, middle, oldest]),
+                         newest + middle + oldest)
 
     def test_no_new_links_backfills_from_archive_to_fifteen(self):
         newest = [f"newest-{n}" for n in range(1, 4)]

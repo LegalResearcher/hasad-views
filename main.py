@@ -75,7 +75,7 @@ def load_previous_batches():
         # Migrate the previous flat-list format to a list of batches.
         if value and all(isinstance(link, str) for link in value):
             return [value]
-        return [batch for batch in value if isinstance(batch, list)][:2]
+        return [batch for batch in value if isinstance(batch, list)][:3]
     except (ValueError, OSError):
         return []
 
@@ -136,9 +136,9 @@ def pair_key(account_number, link):
 
 
 def links_for_run(current_batch, previous_batches, archived_links=()):
-    # Always include the two most recent batches; with no new links, backfill
-    # from the archive to at least 15 unique prior links.
-    selected_previous = previous_batches[:2]
+    # Include two previous batches with new links, or three previous batches
+    # without new links; backfill the latter from the archive to at least 15.
+    selected_previous = previous_batches[:2] if current_batch else previous_batches[:3]
     combined = list(dict.fromkeys(
         current_batch + [link for batch in selected_previous for link in batch]
     ))
@@ -192,7 +192,7 @@ def run_parallel(accounts, current_batch):
         log("لا توجد روابط جديدة أو من الدفعة السابقة للتنفيذ.")
         return 0
 
-    selected_previous = previous_batches[:2]
+    selected_previous = previous_batches[:2] if current_batch else previous_batches[:3]
     forced_links = (
         {link for batch in selected_previous for link in batch}
         if current_batch else set(links)
@@ -229,11 +229,11 @@ def run_parallel(accounts, current_batch):
 
     save_json(PAIR_DONE_PATH, pair_done)
     save_json(PAIR_ATTEMPTS_PATH, attempts)
-    # Keep the current batch plus the newest preceding batch. Together these
-    # become the two previous batches for the next run.
+    # Keep the current batch plus the two newest preceding batches so the
+    # next run can repeat three prior batches if no new links appear.
     updated_batches = (
-        [current_batch] + previous_batches[:1]
-        if current_batch else previous_batches[:2]
+        [current_batch] + previous_batches[:2]
+        if current_batch else previous_batches[:3]
     )
     save_json(PREVIOUS_BATCH_PATH, updated_batches)
 
