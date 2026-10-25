@@ -203,62 +203,78 @@
   },
   "https://t.me/hasadalyoum/24057": {
     "baseline": 2,
-    "max_observed": 1600,
-    "reserved": 6400
+    "max_observed": 2420,
+    "reserved": 7980
   },
   "https://t.me/hasadalyoum/24058": {
     "baseline": 2,
-    "max_observed": 2290,
-    "reserved": 6400
+    "max_observed": 2890,
+    "reserved": 7510
   },
   "https://t.me/hasadalyoum/24059": {
     "baseline": 2,
-    "max_observed": 2270,
-    "reserved": 6400
+    "max_observed": 2940,
+    "reserved": 7460
   },
   "https://t.me/hasadalyoum/24060": {
     "baseline": 2,
-    "max_observed": 2020,
-    "reserved": 6400
+    "max_observed": 2720,
+    "reserved": 7680
   },
   "https://t.me/hasadalyoum/24061": {
     "baseline": 2,
-    "max_observed": 1900,
-    "reserved": 6400
+    "max_observed": 2680,
+    "reserved": 7720,
+    "last_active_order_at": 1792911756,
+    "active_order_until": 1792915356,
+    "active_order_count": 1,
+    "last_active_order_account": 10
   },
   "https://t.me/hasadalyoum/24064": {
     "baseline": 2,
-    "max_observed": 2200,
-    "reserved": 6400
+    "max_observed": 2620,
+    "reserved": 7780,
+    "last_active_order_at": 1792911772,
+    "active_order_until": 1792915372,
+    "active_order_count": 2,
+    "last_active_order_account": 16
   },
   "https://t.me/hasadalyoum/24065": {
     "baseline": 2,
-    "max_observed": 1930,
-    "reserved": 6400
+    "max_observed": 2620,
+    "reserved": 7780,
+    "last_active_order_at": 1792911773,
+    "active_order_until": 1792915373,
+    "active_order_count": 1,
+    "last_active_order_account": 6
   },
   "https://t.me/hasadalyoum/24066": {
     "baseline": 2,
-    "max_observed": 1990,
-    "reserved": 6400
+    "max_observed": 2650,
+    "reserved": 7750
   },
   "https://t.me/hasadalyoum/24067": {
     "baseline": 2,
-    "max_observed": 1780,
-    "reserved": 6400
+    "max_observed": 2380,
+    "reserved": 7900,
+    "last_active_order_at": 1792911807,
+    "active_order_until": 1792915407,
+    "active_order_count": 2,
+    "last_active_order_account": 9
   },
   "https://t.me/hasadalyoum/24068": {
     "baseline": 1,
-    "max_observed": 1850,
-    "reserved": 6400
+    "max_observed": 2390,
+    "reserved": 8000
   },
   "https://t.me/hasadalyoum/24069": {
     "baseline": 2,
-    "max_observed": 2,
-    "reserved": 1600
+    "max_observed": 532,
+    "reserved": 3200
   },
   "https://t.me/hasadalyoum/24070": {
     "baseline": 1,
-    "max_observed": 1,
-    "reserved": 1600
+    "max_observed": 512,
+    "reserved": 3200
   }
 }
