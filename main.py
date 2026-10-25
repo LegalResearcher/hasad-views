@@ -136,9 +136,9 @@ def pair_key(account_number, link):
 
 
 def links_for_run(current_batch, previous_batches, archived_links=()):
-    # With new links, pair them with the most recent batch. With none,
-    # repeat the two most recent batches until a new batch arrives.
-    selected_previous = previous_batches[:1] if current_batch else previous_batches[:2]
+    # Always include the two most recent batches; with no new links, backfill
+    # from the archive to at least 15 unique prior links.
+    selected_previous = previous_batches[:2]
     combined = list(dict.fromkeys(
         current_batch + [link for batch in selected_previous for link in batch]
     ))
@@ -192,7 +192,7 @@ def run_parallel(accounts, current_batch):
         log("لا توجد روابط جديدة أو من الدفعة السابقة للتنفيذ.")
         return 0
 
-    selected_previous = previous_batches[:1] if current_batch else previous_batches[:2]
+    selected_previous = previous_batches[:2]
     forced_links = (
         {link for batch in selected_previous for link in batch}
         if current_batch else set(links)
@@ -229,8 +229,8 @@ def run_parallel(accounts, current_batch):
 
     save_json(PAIR_DONE_PATH, pair_done)
     save_json(PAIR_ATTEMPTS_PATH, attempts)
-    # Keep both recent batches while no fresh links arrive. A fresh batch
-    # becomes newest and shifts the former newest batch into second place.
+    # Keep the current batch plus the newest preceding batch. Together these
+    # become the two previous batches for the next run.
     updated_batches = (
         [current_batch] + previous_batches[:1]
         if current_batch else previous_batches[:2]

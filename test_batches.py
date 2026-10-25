@@ -21,18 +21,21 @@ class BatchSelectionTests(unittest.TestCase):
         self.assertEqual(batch, discovered)
         self.assertEqual(marked, set(discovered))
 
-    def test_combines_new_batch_with_most_recent_previous_batch(self):
+    def test_combines_new_batch_with_both_previous_batches(self):
         previous = [f"old-{n}" for n in range(1, 6)]
         older = [f"older-{n}" for n in range(1, 6)]
         current = [f"new-{n}" for n in range(1, 6)]
-        self.assertEqual(links_for_run(current, [previous, older]), current + previous)
-        self.assertEqual(links_for_run(["shared", "new"], [["shared", "old"]]),
-                         ["shared", "new", "old"])
+        self.assertEqual(links_for_run(current, [previous, older]),
+                         current + previous + older)
+        self.assertEqual(links_for_run(["shared", "new"], [["shared", "old"], ["older"]]),
+                         ["shared", "new", "old", "older"])
 
     def test_large_new_batch_is_not_truncated_when_combined(self):
         current = [f"new-{n}" for n in range(1, 18)]
         previous = [f"old-{n}" for n in range(1, 6)]
-        self.assertEqual(links_for_run(current, [previous]), current + previous)
+        older = [f"older-{n}" for n in range(1, 4)]
+        self.assertEqual(links_for_run(current, [previous, older]),
+                         current + previous + older)
 
     def test_no_new_links_repeats_both_previous_batches(self):
         newest = [f"newest-{n}" for n in range(1, 6)]
