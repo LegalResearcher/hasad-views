@@ -399,12 +399,17 @@
   },
   "https://t.me/hasadalyoum/24118": {
     "baseline": 2,
-    "max_observed": 2,
-    "reserved": 1600
+    "max_observed": 6,
+    "reserved": 1700
   },
   "https://t.me/hasadalyoum/24119": {
     "baseline": 3,
-    "max_observed": 3,
+    "max_observed": 7,
+    "reserved": 1700
+  },
+  "https://t.me/hasadalyoum/24120": {
+    "baseline": 5,
+    "max_observed": 5,
     "reserved": 1600
   }
 }
