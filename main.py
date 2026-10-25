@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 from browser_sender import BrowserSender
+from view_budget import MAX_TOTAL_VIEWS, ViewBudget, fetch_view_counts
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 STATE_DIR = os.path.join(ROOT, "state")
@@ -19,6 +20,7 @@ PAIR_DONE_PATH = os.path.join(STATE_DIR, "account_link_done.json")
 PAIR_ATTEMPTS_PATH = os.path.join(STATE_DIR, "account_link_attempts.json")
 PREVIOUS_BATCH_PATH = os.path.join(STATE_DIR, "previous_batch_links.json")
 NO_NEW_BATCH_CURSOR_PATH = os.path.join(STATE_DIR, "no_new_batch_cursor.json")
+VIEW_BUDGET_PATH = os.path.join(STATE_DIR, "view_budget.json")
 
 TARGET_CHANNEL = "hasadalyoum"
 ACCOUNT_COUNT = 16
@@ -193,10 +195,11 @@ def links_for_run(current_batch, previous_batches, archived_links=(), group_inde
     return combined
 
 
-def process_account(account, links, pair_done, attempts, forced_links):
+def process_account(account, links, pair_done, attempts, forced_links,
+                    current_views, view_budget):
     number, username, password = account
     results = {}
-    work = [
+    eligible = [
         link for link in links
         if link in forced_links
         or (
@@ -204,14 +207,32 @@ def process_account(account, links, pair_done, attempts, forced_links):
             and attempts.get(pair_key(number, link), 0) < MAX_ATTEMPTS_PER_PAIR
         )
     ]
+    work = []
+    for link in eligible:
+        if current_views.get(link) is None:
+            results[link] = "view_unknown"
+            log(f"الحساب {number}: تخطي {link}؛ تعذر قراءة العداد.")
+        else:
+            work.append(link)
     if not work:
         return number, results
 
     try:
         with BrowserSender(username, password) as sender:
             for index, link in enumerate(work):
+                current_count = current_views[link]
+                try:
+                    quantity = view_budget.reserve(link, current_count)
+                except Exception as error:
+                    results[link] = "budget_error"
+                    log(f"الحساب {number}: تعذر حجز ميزانية {link}: {type(error).__name__}: {error}")
+                    continue
+                if quantity <= 0:
+                    results[link] = "capped"
+                    log(f"الحساب {number}: تخطي {link}؛ بلغ العداد والحجوزات سقف {MAX_TOTAL_VIEWS}.")
+                    continue
                 log(f"الحساب {number}: معالجة {link}")
-                status = sender(link)
+                status = sender(link, quantity=quantity)
                 results[link] = status
                 if status == "fatal":
                     for pending in work[index + 1:]:
@@ -235,6 +256,16 @@ def run_parallel(accounts, current_batch):
         log("لا توجد روابط جديدة أو من الدفعة السابقة للتنفيذ.")
         return 0
 
+    current_views = fetch_view_counts(links, TARGET_CHANNEL)
+    view_budget = ViewBudget(
+        VIEW_BUDGET_PATH,
+        legacy_pair_done_path=PAIR_DONE_PATH,
+        legacy_done_links_path=LEGACY_DONE_PATH,
+        legacy_success_counts_path=os.path.join(STATE_DIR, "success_counts.json"),
+    )
+    readable = sum(count is not None for count in current_views.values())
+    log(f"قُرئ عداد المشاهدات لـ{readable} من {len(links)} روابط؛ غير المقروءة لن تُرسل.")
+
     selected_previous = (
         previous_batches[:2]
         if current_batch
@@ -255,7 +286,8 @@ def run_parallel(accounts, current_batch):
     with ThreadPoolExecutor(max_workers=ACCOUNT_COUNT) as executor:
         futures = [
             executor.submit(
-                process_account, account, links, pair_done, attempts, forced_links
+                process_account, account, links, pair_done, attempts, forced_links,
+                current_views, view_budget,
             )
             for account in accounts
         ]
@@ -291,7 +323,12 @@ def run_parallel(accounts, current_batch):
         for link in links
         if results.get(number, {}).get(link) == "ok"
     )
-    expected_pairs = ACCOUNT_COUNT * len(links)
+    expected_pairs = sum(
+        1
+        for number in range(1, ACCOUNT_COUNT + 1)
+        for link in links
+        if results.get(number, {}).get(link) not in (None, "capped")
+    )
     log(f"انتهى التشغيل: نجح {successful_pairs} من أصل {expected_pairs} أزواج حساب/رابط.")
     return 0 if successful_pairs == expected_pairs else 1
 

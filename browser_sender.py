@@ -162,9 +162,12 @@ class BrowserSender:
             self.page.wait_for_timeout(500)
         return None
 
-    def __call__(self, link):
+    def __call__(self, link, quantity=QUANTITY):
         p = self.page
         try:
+            quantity = int(quantity)
+            if quantity < 1 or quantity > int(QUANTITY):
+                raise ValueError(f"الكمية يجب أن تكون بين 1 و{QUANTITY}")
             if not self.logged_in:
                 if not self._login():
                     log("فشل تسجيل الدخول")
@@ -193,7 +196,7 @@ class BrowserSender:
                 log("حقلا الرابط والكمية غير متاحين")
                 return "fail"
             link_field.fill(link)
-            quantity_field.fill(QUANTITY)
+            quantity_field.fill(str(quantity))
 
             confirm = self._first_visible(
                 p.get_by_role("button", name=CONFIRM_TEXT),

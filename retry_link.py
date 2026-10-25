@@ -4,11 +4,15 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from browser_sender import BrowserSender
+from view_budget import MAX_TOTAL_VIEWS, ViewBudget, fetch_current_views
 
 ACCOUNT_COUNT = 16
 LINK_PATTERN = re.compile(r"^https://t\.me/hasadalyoum/\d+$")
 STATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state")
 DONE_PATH = os.path.join(STATE_DIR, "done_links.txt")
+VIEW_BUDGET_PATH = os.path.join(STATE_DIR, "view_budget.json")
+PAIR_DONE_PATH = os.path.join(STATE_DIR, "account_link_done.json")
+LEGACY_SUCCESS_COUNTS_PATH = os.path.join(STATE_DIR, "success_counts.json")
 
 
 def log(message):
@@ -42,11 +46,11 @@ def mark_done(link):
             file.write(link + "\n")
 
 
-def process_account(account, link):
+def process_account(account, link, quantity):
     number, username, password = account
     try:
         with BrowserSender(username, password) as sender:
-            status = sender(link)
+            status = sender(link, quantity=quantity)
     except Exception as error:
         log(f"الحساب {number}: تعذر تشغيل الطلب ({type(error).__name__}: {error})")
         status = "fail"
@@ -54,10 +58,13 @@ def process_account(account, link):
     return number, status
 
 
-def process_link(accounts, link):
+def process_link(scheduled, link):
     results = {}
-    with ThreadPoolExecutor(max_workers=len(accounts)) as executor:
-        futures = [executor.submit(process_account, account, link) for account in accounts]
+    with ThreadPoolExecutor(max_workers=len(scheduled)) as executor:
+        futures = [
+            executor.submit(process_account, account, link, quantity)
+            for account, quantity in scheduled
+        ]
         for future in as_completed(futures):
             number, status = future.result()
             results[number] = status
@@ -76,15 +83,36 @@ def main():
         log(f"تعذر تحميل أسرار الحسابات الـ{ACCOUNT_COUNT}: {error}")
         return 1
 
-    log(f"بدء إعادة الرابط المحدد عبر {len(accounts)} حسابًا بالتوازي (حتى {len(accounts)} طلبًا): {link}")
-    results = process_link(accounts, link)
+    try:
+        current_views = fetch_current_views(link)
+        budget = ViewBudget(
+            VIEW_BUDGET_PATH,
+            legacy_pair_done_path=PAIR_DONE_PATH,
+            legacy_done_links_path=DONE_PATH,
+            legacy_success_counts_path=LEGACY_SUCCESS_COUNTS_PATH,
+        )
+        scheduled = []
+        for account in accounts:
+            quantity = budget.reserve(link, current_views)
+            if quantity:
+                scheduled.append((account, quantity))
+    except Exception as error:
+        log(f"تعذر قراءة العداد أو حجز السقف؛ لن يُرسل الطلب: {type(error).__name__}: {error}")
+        return 1
+
+    if not scheduled:
+        log(f"بلغ العداد والحجوزات سقف {MAX_TOTAL_VIEWS}؛ لم يُرسل أي طلب للرابط {link}.")
+        return 0
+    planned = ", ".join(f"{account[0]}:{quantity}" for account, quantity in scheduled)
+    log(f"الحجز قبل الإرسال: {link} | {len(scheduled)} طلبات | الحساب:الكمية {planned}")
+    results = process_link(scheduled, link)
     successful = sum(status == "ok" for status in results.values())
-    log(f"انتهى إعادة الرابط: نجح {successful} من أصل {len(accounts)} حسابًا.")
+    log(f"انتهى إعادة الرابط: نجح {successful} من أصل {len(scheduled)} طلبات مجدولة.")
 
     # Preserve the previous global completion marker if at least one order was accepted.
     if successful:
         mark_done(link)
-    return 0 if successful == len(accounts) else 1
+    return 0 if successful == len(scheduled) else 1
 
 
 if __name__ == "__main__":
