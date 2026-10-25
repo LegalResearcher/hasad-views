@@ -168,28 +168,28 @@
   },
   "https://t.me/hasadalyoum/24049": {
     "baseline": 3,
-    "max_observed": 1820,
-    "reserved": 4800
+    "max_observed": 2270,
+    "reserved": 6400
   },
   "https://t.me/hasadalyoum/24050": {
     "baseline": 3,
-    "max_observed": 1600,
-    "reserved": 4800
+    "max_observed": 2180,
+    "reserved": 6400
   },
   "https://t.me/hasadalyoum/24051": {
     "baseline": 3,
-    "max_observed": 1330,
-    "reserved": 4800
+    "max_observed": 2160,
+    "reserved": 6400
   },
   "https://t.me/hasadalyoum/24052": {
     "baseline": 3,
-    "max_observed": 1900,
-    "reserved": 4800
+    "max_observed": 2500,
+    "reserved": 6400
   },
   "https://t.me/hasadalyoum/24053": {
     "baseline": 1,
-    "max_observed": 2090,
-    "reserved": 4800
+    "max_observed": 2830,
+    "reserved": 6400
   },
   "https://t.me/hasadalyoum/24055": {
     "baseline": 3,
@@ -248,7 +248,7 @@
   },
   "https://t.me/hasadalyoum/24068": {
     "baseline": 1,
-    "max_observed": 601,
-    "reserved": 3200
+    "max_observed": 1300,
+    "reserved": 4800
   }
 }
