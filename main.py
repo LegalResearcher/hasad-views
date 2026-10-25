@@ -20,7 +20,7 @@ PAIR_ATTEMPTS_PATH = os.path.join(STATE_DIR, "account_link_attempts.json")
 PREVIOUS_BATCH_PATH = os.path.join(STATE_DIR, "previous_batch_links.json")
 
 TARGET_CHANNEL = "hasadalyoum"
-ACCOUNT_COUNT = 11
+ACCOUNT_COUNT = 16
 MAX_ATTEMPTS_PER_PAIR = 3
 MIN_REPEATED_LINKS_WITHOUT_NEW = 15
 
@@ -252,7 +252,7 @@ def main():
     try:
         accounts = load_accounts(os.environ)
     except ValueError as error:
-        log(f"تعذر بدء التشغيل؛ تحقق من أسرار الحسابات الـ11: {error}")
+        log(f"تعذر بدء التشغيل؛ تحقق من أسرار الحسابات الـ16: {error}")
         return 1
 
     log(f"بدء التشغيل المتوازي | القناة: @{TARGET_CHANNEL} | الحسابات: {ACCOUNT_COUNT}")

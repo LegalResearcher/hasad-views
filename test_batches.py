@@ -5,10 +5,28 @@ import unittest
 # Keep these unit tests independent of Playwright/browser installation.
 sys.modules.setdefault("browser_sender", types.SimpleNamespace(BrowserSender=object))
 
-from main import links_for_run, select_current_batch
+from main import ACCOUNT_COUNT, links_for_run, load_accounts, select_current_batch
 
 
 class BatchSelectionTests(unittest.TestCase):
+    def test_main_workflow_loads_all_sixteen_accounts(self):
+        environ = {}
+        for number in range(1, 17):
+            environ[f"SITE_USERNAME_{number}"] = f"user-{number}"
+            environ[f"SITE_PASSWORD_{number}"] = f"password-{number}"
+        accounts = load_accounts(environ)
+        self.assertEqual(ACCOUNT_COUNT, 16)
+        self.assertEqual(len(accounts), 16)
+        self.assertEqual(accounts[-1], (16, "user-16", "password-16"))
+
+    def test_main_workflow_requires_sixteenth_account_secrets(self):
+        environ = {}
+        for number in range(1, 16):
+            environ[f"SITE_USERNAME_{number}"] = f"user-{number}"
+            environ[f"SITE_PASSWORD_{number}"] = f"password-{number}"
+        with self.assertRaisesRegex(ValueError, "SITE_USERNAME_16, SITE_PASSWORD_16"):
+            load_accounts(environ)
+
     def test_selects_all_new_links_in_order_without_a_five_link_cap(self):
         discovered = [f"link-{n}" for n in range(1, 9)]
         batch, marked = select_current_batch(discovered, {"link-1", "link-2"})

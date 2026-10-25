@@ -60,6 +60,16 @@ jobs:
           SITE_PASSWORD_10: ${{ secrets.SITE_PASSWORD_10 }}
           SITE_USERNAME_11: ${{ secrets.SITE_USERNAME_11 }}
           SITE_PASSWORD_11: ${{ secrets.SITE_PASSWORD_11 }}
+          SITE_USERNAME_12: ${{ secrets.SITE_USERNAME_12 }}
+          SITE_PASSWORD_12: ${{ secrets.SITE_PASSWORD_12 }}
+          SITE_USERNAME_13: ${{ secrets.SITE_USERNAME_13 }}
+          SITE_PASSWORD_13: ${{ secrets.SITE_PASSWORD_13 }}
+          SITE_USERNAME_14: ${{ secrets.SITE_USERNAME_14 }}
+          SITE_PASSWORD_14: ${{ secrets.SITE_PASSWORD_14 }}
+          SITE_USERNAME_15: ${{ secrets.SITE_USERNAME_15 }}
+          SITE_PASSWORD_15: ${{ secrets.SITE_PASSWORD_15 }}
+          SITE_USERNAME_16: ${{ secrets.SITE_USERNAME_16 }}
+          SITE_PASSWORD_16: ${{ secrets.SITE_PASSWORD_16 }}
           TARGET_LINK: ${{ inputs.link }}
         run: python retry_link.py
       - name: Commit state
