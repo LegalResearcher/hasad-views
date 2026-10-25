@@ -9,7 +9,7 @@ from unittest.mock import patch
 sys.modules.setdefault("browser_sender", types.SimpleNamespace(BrowserSender=object))
 
 import main
-from view_budget import ViewBudget
+from view_budget import VIEW_SAFEGUARDS_ENABLED, ViewBudget
 
 
 class MainWorkflowBudgetTests(unittest.TestCase):
@@ -70,6 +70,16 @@ class MainWorkflowBudgetTests(unittest.TestCase):
             _, results = self.run_account(10_350)
         self.assertEqual(results[self.link], "ok")
         self.assertEqual(self.calls, [(self.link, 50)])
+
+    def test_disabled_safeguards_send_one_hundred_without_counter_or_reservation(self):
+        self.assertFalse(VIEW_SAFEGUARDS_ENABLED)
+        with patch.object(main, "BrowserSender", self.sender), patch.object(main, "log"):
+            _, results = main.process_account(
+                self.account, [self.link], {}, {}, {self.link}, {}, None
+            )
+        self.assertEqual(results[self.link], "ok")
+        self.assertEqual(self.calls, [(self.link, 100)])
+        self.assertFalse(os.path.exists(self.budget.path))
 
 
 class AccountCountTests(unittest.TestCase):

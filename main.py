@@ -1,5 +1,7 @@
 import json
+import hashlib
 import os
+import tempfile
 import re
 import sys
 import time
@@ -9,8 +11,11 @@ import requests
 from browser_sender import BrowserSender
 from view_budget import (
     ActiveOrderDeferred,
+    MAX_ORDER_QUANTITY,
     MAX_TOTAL_VIEWS,
+    VIEW_SAFEGUARDS_ENABLED,
     ViewBudget,
+    configured_total_limit,
     fetch_view_counts,
 )
 
@@ -30,7 +35,6 @@ VIEW_BUDGET_PATH = os.path.join(STATE_DIR, "view_budget.json")
 TARGET_CHANNEL = "hasadalyoum"
 ACCOUNT_COUNT = 30
 MAX_ATTEMPTS_PER_PAIR = 3
-MIN_REPEATED_LINKS_WITHOUT_NEW = 15
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 "
@@ -67,9 +71,19 @@ def load_json(path):
 
 
 def save_json(path, value):
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(value, f, ensure_ascii=False, indent=2)
-        f.write("\n")
+    directory = os.path.dirname(os.path.abspath(path))
+    os.makedirs(directory, exist_ok=True)
+    fd, temp_path = tempfile.mkstemp(prefix=".state-", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(value, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, path)
+    finally:
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
 
 
 def load_previous_batches():
@@ -128,13 +142,15 @@ def pull_once():
         return []
 
     processed = set(read_lines(PROCESSED_PATH))
-    current_batch, mark_processed = select_current_batch(discovered, processed)
+    current_batch, _ = select_current_batch(discovered, processed)
     if not current_batch:
         log("لا توجد روابط جديدة.")
         return []
 
-    append_lines(LINKS_PATH, current_batch)
-    append_lines(PROCESSED_PATH, sorted(mark_processed))
+    archived = set(read_lines(LINKS_PATH))
+    to_archive = [link for link in current_batch if link not in archived]
+    if to_archive:
+        append_lines(LINKS_PATH, to_archive)
     log(f"أُضيفت {len(current_batch)} روابط جديدة لهذه الدفعة.")
     return current_batch
 
@@ -191,61 +207,41 @@ def summarize_run_results(results, links):
     return 0 if successful == expected else 1
 
 
-def no_new_group_count(previous_batches):
-    older_batch_count = max(0, len(previous_batches) - 1)
-    return max(1, (older_batch_count + 1) // 2)
+def batch_fingerprint(batch):
+    payload = json.dumps(batch, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def next_no_new_group_index(previous_batches, group_index):
-    return (group_index + 1) % no_new_group_count(previous_batches)
+def batch_is_checkpointed(current_batch, previous_batches):
+    return bool(
+        current_batch
+        and previous_batches
+        and set(current_batch).issubset(set(previous_batches[0]))
+    )
 
 
-def select_no_new_batches(previous_batches, group_index=0):
-    """Keep the newest batch fixed and rotate through older batches in pairs."""
+def select_no_new_batches(previous_batches, cursor_state=None):
+    """Select the two newest saved batches once for each newest-batch identity."""
     if not previous_batches:
         return []
-    if len(previous_batches) == 1:
-        return previous_batches[:1]
-
-    group_count = no_new_group_count(previous_batches)
-    group_index = group_index % group_count
-    start = 1 + (group_index * 2)
-    return [previous_batches[0]] + previous_batches[start:start + 2]
+    cursor_state = cursor_state if isinstance(cursor_state, dict) else {}
+    latest_id = batch_fingerprint(previous_batches[0])
+    if cursor_state.get("backfilled_batch_id") == latest_id:
+        return []
+    return previous_batches[:2]
 
 
-def current_no_new_group_index(previous_batches):
-    state = load_json(NO_NEW_BATCH_CURSOR_PATH)
-    index = state.get("next_group", 0)
-    if not isinstance(index, int) or isinstance(index, bool) or index < 0:
-        index = 0
-    return index % no_new_group_count(previous_batches)
-
-
-def links_for_run(current_batch, previous_batches, archived_links=(), group_index=0):
-    # New links pair with the two latest batches. With no new links, keep the
-    # latest batch fixed and rotate pairs of older batches; use legacy archive
-    # links only to meet the minimum of 15.
-    selected_previous = (
-        previous_batches[:2]
-        if current_batch
-        else select_no_new_batches(previous_batches, group_index)
-    )
-    combined = list(dict.fromkeys(
+def links_for_run(current_batch, previous_batches):
+    # A new batch pairs only with its immediate predecessor. Idle backfill uses
+    # the two newest saved batches; run_parallel persists that it happened once.
+    if current_batch:
+        offset = 1 if batch_is_checkpointed(current_batch, previous_batches) else 0
+        selected_previous = previous_batches[offset:offset + 1]
+    else:
+        selected_previous = previous_batches[:2]
+    return list(dict.fromkeys(
         current_batch + [link for batch in selected_previous for link in batch]
     ))
-    if not current_batch:
-        known_batch_links = {
-            link for batch in previous_batches for link in batch
-        }
-        legacy_archive = [
-            link for link in archived_links if link not in known_batch_links
-        ]
-        for link in reversed(legacy_archive):
-            if link not in combined:
-                combined.append(link)
-            if len(combined) >= MIN_REPEATED_LINKS_WITHOUT_NEW:
-                break
-    return combined
 
 
 def process_account(account, links, pair_done, attempts, forced_links,
@@ -262,7 +258,9 @@ def process_account(account, links, pair_done, attempts, forced_links,
     ]
     work = []
     for link in eligible:
-        if current_views.get(link) is None:
+        if view_budget is None:
+            work.append(link)
+        elif current_views.get(link) is None:
             results[link] = "view_unknown"
             log(f"الحساب {number}: تخطي {link}؛ تعذر قراءة العداد.")
         else:
@@ -273,27 +271,30 @@ def process_account(account, links, pair_done, attempts, forced_links,
     try:
         with BrowserSender(username, password) as sender:
             for index, link in enumerate(work):
-                current_count = current_views[link]
-                try:
-                    quantity = view_budget.reserve(link, current_count)
-                except ActiveOrderDeferred as error:
-                    results[link] = "active_order_wait"
-                    log(
-                        f"الحساب {number}: تخطي {link}؛ يوجد طلب نشط، "
-                        f"ويعاد النظر بعد {deferred_until_text(error.deferred_until)}."
-                    )
-                    continue
-                except Exception as error:
-                    results[link] = "budget_error"
-                    log(f"الحساب {number}: تعذر حجز ميزانية {link}: {type(error).__name__}: {error}")
-                    continue
+                if view_budget is None:
+                    quantity = MAX_ORDER_QUANTITY
+                else:
+                    current_count = current_views[link]
+                    try:
+                        quantity = view_budget.reserve(link, current_count)
+                    except ActiveOrderDeferred as error:
+                        results[link] = "active_order_wait"
+                        log(
+                            f"الحساب {number}: تخطي {link}؛ يوجد طلب نشط، "
+                            f"ويعاد النظر بعد {deferred_until_text(error.deferred_until)}."
+                        )
+                        continue
+                    except Exception as error:
+                        results[link] = "budget_error"
+                        log(f"الحساب {number}: تعذر حجز ميزانية {link}: {type(error).__name__}: {error}")
+                        continue
                 if quantity <= 0:
                     results[link] = "capped"
                     log(f"الحساب {number}: تخطي {link}؛ بلغ العداد والحجوزات سقف {MAX_TOTAL_VIEWS}.")
                     continue
                 log(f"الحساب {number}: معالجة {link}")
                 status = sender(link, quantity=quantity)
-                if status == "active_order":
+                if status == "active_order" and view_budget is not None:
                     try:
                         deferred_until = view_budget.record_active_order(
                             link, account_number=number
@@ -327,34 +328,57 @@ def run_parallel(accounts, current_batch):
     pair_done = load_json(PAIR_DONE_PATH)
     attempts = load_json(PAIR_ATTEMPTS_PATH)
     previous_batches = load_previous_batches()
-    archive = read_lines(LINKS_PATH)
-    group_index = current_no_new_group_index(previous_batches)
-    links = links_for_run(current_batch, previous_batches, archive, group_index)
+    cursor_state = load_json(NO_NEW_BATCH_CURSOR_PATH)
+    if current_batch:
+        already_checkpointed = batch_is_checkpointed(current_batch, previous_batches)
+        selected_previous = (
+            previous_batches[1:2] if already_checkpointed else previous_batches[:1]
+        )
+        updated_batches = (
+            previous_batches if already_checkpointed
+            else [current_batch] + previous_batches
+        )
+        links = links_for_run(current_batch, previous_batches)
+        backfilled_batch_id = None
+    else:
+        selected_previous = select_no_new_batches(previous_batches, cursor_state)
+        if not selected_previous:
+            log("لا توجد روابط جديدة؛ سبق معالجة أحدث دفعتين مرة واحدة، ولن تُعاد الدفعات حتى ظهور جديد.")
+            return 0
+        links = links_for_run([], selected_previous)
+        updated_batches = previous_batches
+        backfilled_batch_id = batch_fingerprint(previous_batches[0])
     if not links:
         log("لا توجد روابط جديدة أو من الدفعة السابقة للتنفيذ.")
         return 0
 
-    current_views = fetch_view_counts(links, TARGET_CHANNEL)
-    view_budget = ViewBudget(
-        VIEW_BUDGET_PATH,
-        legacy_pair_done_path=PAIR_DONE_PATH,
-        legacy_done_links_path=LEGACY_DONE_PATH,
-        legacy_success_counts_path=os.path.join(STATE_DIR, "success_counts.json"),
-    )
-    readable = sum(count is not None for count in current_views.values())
-    log(f"قُرئ عداد المشاهدات لـ{readable} من {len(links)} روابط؛ غير المقروءة لن تُرسل.")
+    if current_batch:
+        # Checkpoint the batch before sending. If a workflow is cancelled, the
+        # next idle run can recover it instead of losing already-discovered links.
+        save_json(NO_NEW_BATCH_CURSOR_PATH, {"backfilled_batch_id": None})
+        save_json(PREVIOUS_BATCH_PATH, updated_batches)
+        append_lines(PROCESSED_PATH, current_batch)
 
-    selected_previous = (
-        previous_batches[:2]
-        if current_batch
-        else select_no_new_batches(previous_batches, group_index)
-    )
+    if VIEW_SAFEGUARDS_ENABLED:
+        current_views = fetch_view_counts(links, TARGET_CHANNEL)
+        view_budget = ViewBudget(
+            VIEW_BUDGET_PATH,
+            legacy_pair_done_path=PAIR_DONE_PATH,
+            legacy_done_links_path=LEGACY_DONE_PATH,
+            legacy_success_counts_path=os.path.join(STATE_DIR, "success_counts.json"),
+            max_total=configured_total_limit(),
+        )
+        readable = sum(count is not None for count in current_views.values())
+        log(f"قُرئ عداد المشاهدات لـ{readable} من {len(links)} روابط؛ غير المقروءة لن تُرسل.")
+    else:
+        current_views = {}
+        view_budget = None
+        log("تنبيه: قراءة العداد والحجز المشترك ومهلة الطلب النشط معطلة مؤقتًا؛ الكمية لكل طلب 100.")
+
     forced_links = (
         {link for batch in selected_previous for link in batch}
         if current_batch else set(links)
     )
-    if not current_batch and len(links) < MIN_REPEATED_LINKS_WITHOUT_NEW:
-        log(f"تنبيه: الأرشيف يحتوي على {len(links)} روابط سابقة فقط؛ ستُعالج كلها.")
     log(
         f"بدء {len(accounts)} حسابًا بالتوازي على {len(links)} روابط: "
         f"{len(current_batch)} جديدة + {len(forced_links & set(links))} من الدفعات السابقة "
@@ -386,14 +410,9 @@ def run_parallel(accounts, current_batch):
 
     save_json(PAIR_DONE_PATH, pair_done)
     save_json(PAIR_ATTEMPTS_PATH, attempts)
-    # Keep every verifiable batch so no-new runs can rotate through history.
-    updated_batches = [current_batch] + previous_batches if current_batch else previous_batches
+    # Preserve batch history; arm one idle backfill after each newly discovered batch.
     save_json(PREVIOUS_BATCH_PATH, updated_batches)
-    next_group = (
-        0
-        if current_batch else next_no_new_group_index(previous_batches, group_index)
-    )
-    save_json(NO_NEW_BATCH_CURSOR_PATH, {"next_group": next_group})
+    save_json(NO_NEW_BATCH_CURSOR_PATH, {"backfilled_batch_id": backfilled_batch_id})
 
     return summarize_run_results(results, links)
 

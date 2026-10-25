@@ -8,7 +8,10 @@ from browser_sender import BrowserSender
 from view_budget import (
     ActiveOrderDeferred,
     MAX_TOTAL_VIEWS,
+    MAX_ORDER_QUANTITY,
+    VIEW_SAFEGUARDS_ENABLED,
     ViewBudget,
+    configured_total_limit,
     fetch_current_views,
 )
 
@@ -106,37 +109,47 @@ def main():
         return 1
 
     try:
-        current_views = fetch_current_views(link)
-        budget = ViewBudget(
-            VIEW_BUDGET_PATH,
-            legacy_pair_done_path=PAIR_DONE_PATH,
-            legacy_done_links_path=DONE_PATH,
-            legacy_success_counts_path=LEGACY_SUCCESS_COUNTS_PATH,
-        )
-        scheduled = []
-        for account in accounts:
-            try:
-                quantity = budget.reserve(link, current_views)
-            except ActiveOrderDeferred as error:
-                log(
-                    f"الرابط مؤجل بسبب طلب نشط حتى "
-                    f"{deferred_until_text(error.deferred_until)}؛ لم يُرسل طلب جديد."
-                )
-                return 0
-            if quantity:
-                scheduled.append((account, quantity))
+        if VIEW_SAFEGUARDS_ENABLED:
+            current_views = fetch_current_views(link)
+            budget = ViewBudget(
+                VIEW_BUDGET_PATH,
+                legacy_pair_done_path=PAIR_DONE_PATH,
+                legacy_done_links_path=DONE_PATH,
+                legacy_success_counts_path=LEGACY_SUCCESS_COUNTS_PATH,
+                max_total=configured_total_limit(),
+            )
+            scheduled = []
+            for account in accounts:
+                try:
+                    quantity = budget.reserve(link, current_views)
+                except ActiveOrderDeferred as error:
+                    log(
+                        f"الرابط مؤجل بسبب طلب نشط حتى "
+                        f"{deferred_until_text(error.deferred_until)}؛ لم يُرسل طلب جديد."
+                    )
+                    return 0
+                if quantity:
+                    scheduled.append((account, quantity))
+        else:
+            budget = None
+            scheduled = [(account, MAX_ORDER_QUANTITY) for account in accounts]
     except Exception as error:
-        log(f"تعذر قراءة العداد أو حجز السقف؛ لن يُرسل الطلب: {type(error).__name__}: {error}")
+        log(f"تعذر تجهيز الطلب؛ لن يُرسل: {type(error).__name__}: {error}")
         return 1
 
     if not scheduled:
-        log(f"بلغ العداد والحجوزات سقف {MAX_TOTAL_VIEWS}؛ لم يُرسل أي طلب للرابط {link}.")
+        if budget is None:
+            log(f"لم يُجدول أي طلب للرابط {link}.")
+        else:
+            log(f"بلغ العداد والحجوزات سقف {MAX_TOTAL_VIEWS}؛ لم يُرسل أي طلب للرابط {link}.")
         return 0
+    if not VIEW_SAFEGUARDS_ENABLED:
+        log("تنبيه: قراءة العداد والحجز المشترك وتأجيل الطلب النشط معطلة مؤقتًا؛ الكمية لكل طلب 100.")
     planned = ", ".join(f"{account[0]}:{quantity}" for account, quantity in scheduled)
     log(f"الحجز قبل الإرسال: {link} | {len(scheduled)} طلبات | الحساب:الكمية {planned}")
     results = process_link(scheduled, link)
     for number, status in list(results.items()):
-        if status == "active_order":
+        if status == "active_order" and budget is not None:
             try:
                 deferred_until = budget.record_active_order(
                     link, account_number=number

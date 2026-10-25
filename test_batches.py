@@ -1,16 +1,23 @@
 import sys
 import types
 import unittest
+from unittest.mock import patch
 
 # Keep these unit tests independent of Playwright/browser installation.
 sys.modules.setdefault("browser_sender", types.SimpleNamespace(BrowserSender=object))
 
+import main
 from main import (
     ACCOUNT_COUNT,
+    LINKS_PATH,
+    NO_NEW_BATCH_CURSOR_PATH,
+    PAIR_ATTEMPTS_PATH,
+    PAIR_DONE_PATH,
+    PREVIOUS_BATCH_PATH,
+    PROCESSED_PATH,
+    batch_fingerprint,
     links_for_run,
     load_accounts,
-    no_new_group_count,
-    next_no_new_group_index,
     select_current_batch,
     select_no_new_batches,
 )
@@ -47,78 +54,187 @@ class BatchSelectionTests(unittest.TestCase):
         self.assertEqual(batch, discovered)
         self.assertEqual(marked, set(discovered))
 
-    def test_combines_new_batch_with_both_previous_batches(self):
+    def test_discovery_does_not_mark_new_links_processed_before_batch_checkpoint(self):
+        links = ["link-1", "link-2"]
+        writes = []
+        with patch.object(main, "fetch_links", return_value=links), \
+             patch.object(main, "read_lines", return_value=[]), \
+             patch.object(
+                 main, "append_lines",
+                 side_effect=lambda path, values: writes.append((path, list(values))),
+             ), \
+             patch.object(main, "log"):
+            self.assertEqual(main.pull_once(), links)
+
+        self.assertEqual(writes, [(LINKS_PATH, links)])
+
+    def test_new_batch_pairs_only_with_its_immediate_predecessor(self):
         previous = [f"old-{n}" for n in range(1, 6)]
         older = [f"older-{n}" for n in range(1, 6)]
         current = [f"new-{n}" for n in range(1, 6)]
-        self.assertEqual(links_for_run(current, [previous, older]),
-                         current + previous + older)
-        self.assertEqual(links_for_run(["shared", "new"], [["shared", "old"], ["older"]]),
-                         ["shared", "new", "old", "older"])
+        self.assertEqual(links_for_run(current, [previous, older]), current + previous)
+        self.assertEqual(
+            links_for_run(["shared", "new"], [["shared", "old"], ["older"]]),
+            ["shared", "new", "old"],
+        )
 
-    def test_large_new_batch_is_not_truncated_when_combined(self):
+    def test_checkpoint_precedes_processing_and_marks_current_batch(self):
+        history = [["previous-1"]]
+        current = ["new-1", "new-2"]
+        stored = {PAIR_DONE_PATH: {}, PAIR_ATTEMPTS_PATH: {}, NO_NEW_BATCH_CURSOR_PATH: {}}
+        saved = {}
+        events = []
+        processed_calls = []
+        observed = []
+        accounts = [(n, f"user-{n}", f"password-{n}") for n in range(1, 31)]
+
+        def save_state(path, value):
+            events.append(("save", path))
+            saved[path] = value
+
+        def append_state(path, values):
+            events.append(("append", path))
+            if path == PROCESSED_PATH:
+                processed_calls.append(list(values))
+
+        def fake_process(account, links, _pair_done, _attempts, forced_links, *_args):
+            events.append(("process", account[0]))
+            observed.append((list(links), set(forced_links)))
+            return account[0], {link: "ok" for link in links}
+
+        with patch.object(main, "load_json", side_effect=lambda path: stored[path]), \
+             patch.object(main, "load_previous_batches", return_value=history), \
+             patch.object(main, "save_json", side_effect=save_state), \
+             patch.object(main, "append_lines", side_effect=append_state), \
+             patch.object(main, "fetch_view_counts") as fetch_counts, \
+             patch.object(main, "process_account", side_effect=fake_process), \
+             patch.object(main, "log"):
+            result = main.run_parallel(accounts, current)
+
+        expected = current + history[0]
+        checkpoint_cursor = events.index(("save", NO_NEW_BATCH_CURSOR_PATH))
+        checkpoint_history = events.index(("save", PREVIOUS_BATCH_PATH))
+        checkpoint_processed = events.index(("append", PROCESSED_PATH))
+        first_process = next(index for index, event in enumerate(events) if event[0] == "process")
+        self.assertEqual(result, 0)
+        self.assertEqual(checkpoint_cursor < checkpoint_history < checkpoint_processed < first_process, True)
+        self.assertEqual(processed_calls, [current])
+        self.assertEqual(len(observed), 30)
+        self.assertTrue(all(links == expected for links, _ in observed))
+        self.assertTrue(all(forced == set(history[0]) for _, forced in observed))
+        self.assertEqual(saved[PREVIOUS_BATCH_PATH], [current] + history)
+        self.assertEqual(saved[NO_NEW_BATCH_CURSOR_PATH], {"backfilled_batch_id": None})
+        fetch_counts.assert_not_called()
+
+    def test_recovery_of_checkpointed_current_batch_does_not_pair_it_with_itself(self):
+        current = ["new-1", "new-2"]
+        history = [current, ["previous-1"], ["older-1"]]
+        stored = {PAIR_DONE_PATH: {}, PAIR_ATTEMPTS_PATH: {}, NO_NEW_BATCH_CURSOR_PATH: {}}
+        saved = {}
+        observed = []
+        accounts = [(n, f"user-{n}", f"password-{n}") for n in range(1, 31)]
+
+        def fake_process(account, links, _pair_done, _attempts, forced_links, *_args):
+            observed.append((list(links), set(forced_links)))
+            return account[0], {link: "ok" for link in links}
+
+        with patch.object(main, "load_json", side_effect=lambda path: stored[path]), \
+             patch.object(main, "load_previous_batches", return_value=history), \
+             patch.object(main, "save_json", side_effect=lambda path, value: saved.__setitem__(path, value)), \
+             patch.object(main, "append_lines"), \
+             patch.object(main, "fetch_view_counts"), \
+             patch.object(main, "process_account", side_effect=fake_process), \
+             patch.object(main, "log"):
+            result = main.run_parallel(accounts, current)
+
+        expected = current + history[1]
+        self.assertEqual(result, 0)
+        self.assertEqual(len(observed), 30)
+        self.assertTrue(all(links == expected for links, _ in observed))
+        self.assertTrue(all(forced == set(history[1]) for _, forced in observed))
+        self.assertEqual(saved[PREVIOUS_BATCH_PATH], history)
+
+    def test_large_new_batch_is_not_truncated_and_uses_one_previous_batch(self):
         current = [f"new-{n}" for n in range(1, 18)]
         previous = [f"old-{n}" for n in range(1, 6)]
         older = [f"older-{n}" for n in range(1, 4)]
-        self.assertEqual(links_for_run(current, [previous, older]),
-                         current + previous + older)
+        self.assertEqual(links_for_run(current, [previous, older]), current + previous)
 
-    def test_no_new_links_repeats_three_previous_batches(self):
-        newest = [f"newest-{n}" for n in range(1, 6)]
-        middle = [f"middle-{n}" for n in range(1, 6)]
-        oldest = [f"oldest-{n}" for n in range(1, 6)]
-        self.assertEqual(links_for_run([], [newest, middle, oldest]),
-                         newest + middle + oldest)
-
-    def test_no_new_runs_rotate_older_batch_pairs_and_keep_newest_fixed(self):
+    def test_idle_backfill_selects_two_latest_batches_once_per_latest_batch(self):
         history = [[f"batch-{number}"] for number in range(10)]
-        self.assertEqual(no_new_group_count(history), 5)
-        expected = [
-            ["batch-0", "batch-1", "batch-2"],
-            ["batch-0", "batch-3", "batch-4"],
-            ["batch-0", "batch-5", "batch-6"],
-            ["batch-0", "batch-7", "batch-8"],
-            ["batch-0", "batch-9"],
-        ]
-        for index, selected in enumerate(expected):
-            self.assertEqual(select_no_new_batches(history, index), [[link] for link in selected])
-        self.assertEqual(select_no_new_batches(history, 5), [["batch-0"], ["batch-1"], ["batch-2"]])
-        self.assertEqual(next_no_new_group_index(history, 3), 4)
-        self.assertEqual(next_no_new_group_index(history, 4), 0)
+        self.assertEqual(select_no_new_batches(history, {}), history[:2])
 
-    def test_rotation_uses_legacy_archive_only_as_fifteen_link_backfill(self):
-        history = [[f"batch-{number}"] for number in range(10)]
-        archive = [f"legacy-{number}" for number in range(1, 30)]
-        first = links_for_run([], history, archive, group_index=0)
-        second = links_for_run([], history, archive, group_index=1)
-        self.assertEqual(len(first), 15)
-        self.assertEqual(len(second), 15)
-        self.assertEqual(first[:3], ["batch-0", "batch-1", "batch-2"])
-        self.assertEqual(second[:3], ["batch-0", "batch-3", "batch-4"])
-        self.assertNotIn("batch-1", second)
-        self.assertNotIn("batch-2", second)
+        saved_cursor = {"backfilled_batch_id": batch_fingerprint(history[0])}
+        self.assertEqual(select_no_new_batches(history, saved_cursor), [])
 
-    def test_no_new_links_backfills_from_archive_to_fifteen(self):
-        newest = [f"newest-{n}" for n in range(1, 4)]
-        older = [f"older-{n}" for n in range(1, 3)]
-        archive = [f"archive-{n}" for n in range(1, 21)]
-        selected = links_for_run([], [newest, older], archive)
-        self.assertEqual(len(selected), 15)
-        self.assertEqual(selected[:5], newest + older)
-        self.assertEqual(selected[5:], list(reversed(archive[-10:])))
+        next_history = [["new-batch"], *history]
+        self.assertEqual(select_no_new_batches(next_history, saved_cursor), next_history[:2])
 
-    def test_no_new_links_keeps_all_previous_when_they_exceed_fifteen(self):
-        newest = [f"newest-{n}" for n in range(1, 9)]
-        older = [f"older-{n}" for n in range(1, 10)]
-        selected = links_for_run([], [newest, older], [])
-        self.assertEqual(selected, newest + older)
+    def test_idle_backfill_discards_legacy_cursor_and_does_not_add_archive(self):
+        history = [["newest-1", "newest-2"], ["previous-1"], ["older-1"]]
+        self.assertEqual(select_no_new_batches(history, {"next_group": 4}), history[:2])
+        self.assertEqual(links_for_run([], history), ["newest-1", "newest-2", "previous-1"])
 
-    def test_uses_all_archive_if_fewer_than_fifteen_exist(self):
-        archive = [f"archive-{n}" for n in range(1, 7)]
-        selected = links_for_run([], [], archive)
-        self.assertEqual(selected, list(reversed(archive)))
+    def test_idle_backfill_persists_latest_batch_marker_and_only_sends_two_batches(self):
+        history = [["newest-1", "newest-2"], ["previous-1"], ["older-1"]]
+        cursor = {"next_group": 0}
+        stored = {
+            PAIR_DONE_PATH: {},
+            PAIR_ATTEMPTS_PATH: {},
+            PREVIOUS_BATCH_PATH: history,
+            NO_NEW_BATCH_CURSOR_PATH: cursor,
+        }
+        saved = {}
+        processed_links = []
+        accounts = [(n, f"user-{n}", f"password-{n}") for n in range(1, 31)]
 
-    def test_without_any_new_or_previous_links_returns_empty(self):
+        def fake_process(account, links, *_args):
+            processed_links.append(list(links))
+            return account[0], {link: "ok" for link in links}
+
+        with patch.object(main, "load_json", side_effect=lambda path: stored[path]), \
+             patch.object(main, "load_previous_batches", return_value=history), \
+             patch.object(main, "save_json", side_effect=lambda path, value: saved.__setitem__(path, value)), \
+             patch.object(main, "fetch_view_counts") as fetch_counts, \
+             patch.object(main, "process_account", side_effect=fake_process), \
+             patch.object(main, "log"):
+            result = main.run_parallel(accounts, [])
+
+        expected_links = history[0] + history[1]
+        self.assertEqual(result, 0)
+        self.assertEqual(len(processed_links), 30)
+        self.assertTrue(all(links == expected_links for links in processed_links))
+        fetch_counts.assert_not_called()
+        self.assertEqual(
+            saved[NO_NEW_BATCH_CURSOR_PATH],
+            {"backfilled_batch_id": batch_fingerprint(history[0])},
+        )
+        self.assertEqual(saved[PREVIOUS_BATCH_PATH], history)
+
+    def test_second_no_new_run_skips_everything_until_new_batch_arrives(self):
+        history = [["newest-1"], ["previous-1"], ["older-1"]]
+        stored = {
+            PAIR_DONE_PATH: {},
+            PAIR_ATTEMPTS_PATH: {},
+            PREVIOUS_BATCH_PATH: history,
+            NO_NEW_BATCH_CURSOR_PATH: {
+                "backfilled_batch_id": batch_fingerprint(history[0])
+            },
+        }
+        with patch.object(main, "load_json", side_effect=lambda path: stored[path]), \
+             patch.object(main, "load_previous_batches", return_value=history), \
+             patch.object(main, "save_json") as save_state, \
+             patch.object(main, "fetch_view_counts") as fetch_counts, \
+             patch.object(main, "process_account") as process, \
+             patch.object(main, "log"):
+            result = main.run_parallel([], [])
+
+        self.assertEqual(result, 0)
+        fetch_counts.assert_not_called()
+        process.assert_not_called()
+        save_state.assert_not_called()
+
+    def test_no_new_links_does_not_pull_from_unbatched_archive(self):
         self.assertEqual(links_for_run([], []), [])
 
 

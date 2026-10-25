@@ -29,14 +29,14 @@ class ParallelRetryTests(unittest.TestCase):
         done_links = os.path.join(temp, "done_links.txt")
         budget = os.path.join(temp, "view_budget.json")
         with patch.dict(os.environ, self.environ, clear=True), \
-             patch.object(retry_link, "fetch_current_views", return_value=current_views), \
+             patch.object(retry_link, "fetch_current_views", return_value=current_views) as fetch, \
              patch.object(retry_link, "PAIR_DONE_PATH", pair_done), \
              patch.object(retry_link, "DONE_PATH", done_links), \
              patch.object(retry_link, "LEGACY_SUCCESS_COUNTS_PATH", os.path.join(temp, "success_counts.json")), \
              patch.object(retry_link, "VIEW_BUDGET_PATH", budget), \
              patch.object(retry_link, "process_link", return_value=process_result or {}) as process:
             result = retry_link.main()
-        return result, process
+        return result, process, fetch
 
     def test_process_link_uses_all_scheduled_accounts_concurrently(self):
         barrier = threading.Barrier(30)
@@ -71,31 +71,40 @@ class ParallelRetryTests(unittest.TestCase):
         self.assertEqual({username for username, _, _ in calls},
                          {f"user-{number}" for number in range(1, 31)})
 
-    def test_unreadable_counter_stops_manual_retry_before_sending(self):
+    def test_manual_retry_does_not_read_counter_when_safeguards_are_disabled(self):
         with tempfile.TemporaryDirectory() as temp, \
              patch.dict(os.environ, self.environ, clear=True), \
-             patch.object(retry_link, "fetch_current_views", side_effect=RuntimeError("unreadable")), \
+             patch.object(retry_link, "fetch_current_views", side_effect=RuntimeError("unreadable")) as fetch, \
+             patch.object(retry_link, "DONE_PATH", os.path.join(temp, "done_links.txt")), \
              patch.object(retry_link, "VIEW_BUDGET_PATH", os.path.join(temp, "view_budget.json")), \
-             patch.object(retry_link, "process_link") as process:
-            self.assertEqual(retry_link.main(), 1)
-        process.assert_not_called()
+             patch.object(retry_link, "process_link", return_value={n: "ok" for n in range(1, 31)}) as process:
+            self.assertEqual(retry_link.main(), 0)
+        fetch.assert_not_called()
+        scheduled = process.call_args.args[0]
+        self.assertEqual(len(scheduled), 30)
+        self.assertEqual({quantity for _, quantity in scheduled}, {100})
 
-    def test_manual_retry_does_not_send_when_already_at_ceiling(self):
+    def test_manual_retry_ignores_old_total_ceiling_but_keeps_per_order_limit(self):
         with tempfile.TemporaryDirectory() as temp:
-            result, process = self.run_main_with_temp_state(temp, 10_400)
-        self.assertEqual(result, 0)
-        process.assert_not_called()
-
-    def test_manual_retry_passes_only_remaining_quantity(self):
-        with tempfile.TemporaryDirectory() as temp:
-            result, process = self.run_main_with_temp_state(
-                temp, 10_350, process_result={1: "ok"}
+            result, process, fetch = self.run_main_with_temp_state(
+                temp, 50_000, process_result={n: "ok" for n in range(1, 31)}
             )
         self.assertEqual(result, 0)
+        fetch.assert_not_called()
         scheduled = process.call_args.args[0]
-        self.assertEqual(len(scheduled), 1)
-        self.assertEqual(scheduled[0][0], self.accounts[0])
-        self.assertEqual(scheduled[0][1], 50)
+        self.assertEqual(len(scheduled), 30)
+        self.assertEqual({quantity for _, quantity in scheduled}, {100})
+
+    def test_manual_retry_uses_one_hundred_for_every_account_above_old_ceiling(self):
+        with tempfile.TemporaryDirectory() as temp:
+            result, process, fetch = self.run_main_with_temp_state(
+                temp, 10_350, process_result={n: "ok" for n in range(1, 31)}
+            )
+        self.assertEqual(result, 0)
+        fetch.assert_not_called()
+        scheduled = process.call_args.args[0]
+        self.assertEqual(len(scheduled), 30)
+        self.assertEqual({quantity for _, quantity in scheduled}, {100})
 
     def test_manual_retry_requires_secrets_for_all_thirty_accounts(self):
         environ = {}

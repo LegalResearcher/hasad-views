@@ -124,10 +124,11 @@ class ActiveOrderBudgetTests(unittest.TestCase):
         self.assertEqual(calls, [])
         self.assertEqual(self.read_state()[self.link]["reserved"], 100)
 
-    def test_manual_retry_skips_persisted_active_order(self):
+    def test_manual_retry_ignores_persisted_active_order_when_safeguards_disabled(self):
         budget = ViewBudget(self.path)
         budget.reserve(self.link, 1_000)
         budget.record_active_order(self.link)
+        original_entry = self.read_state()[self.link]
         environ = {"TARGET_LINK": self.link}
         for number in range(1, 31):
             environ[f"SITE_USERNAME_{number}"] = f"user-{number}"
@@ -138,14 +139,18 @@ class ActiveOrderBudgetTests(unittest.TestCase):
              patch.object(retry_link, "PAIR_DONE_PATH", os.path.join(self.temp.name, "pairs.json")), \
              patch.object(retry_link, "DONE_PATH", os.path.join(self.temp.name, "done.txt")), \
              patch.object(retry_link, "LEGACY_SUCCESS_COUNTS_PATH", os.path.join(self.temp.name, "counts.json")), \
-             patch.object(retry_link, "fetch_current_views", return_value=1_100), \
-             patch.object(retry_link, "process_link") as process, \
+             patch.object(retry_link, "fetch_current_views") as fetch, \
+             patch.object(retry_link, "process_link", return_value={n: "active_order" for n in range(1, 31)}) as process, \
              patch.object(retry_link, "log"):
             result = retry_link.main()
 
         self.assertEqual(result, 0)
-        process.assert_not_called()
-        self.assertEqual(self.read_state()[self.link]["reserved"], 100)
+        fetch.assert_not_called()
+        process.assert_called_once()
+        scheduled = process.call_args.args[0]
+        self.assertEqual(len(scheduled), 30)
+        self.assertEqual({quantity for _, quantity in scheduled}, {100})
+        self.assertEqual(self.read_state()[self.link], original_entry)
 
     def test_manual_retry_does_not_mark_partial_active_order_as_done(self):
         environ = {"TARGET_LINK": self.link}
@@ -158,18 +163,17 @@ class ActiveOrderBudgetTests(unittest.TestCase):
              patch.object(retry_link, "DONE_PATH", os.path.join(self.temp.name, "done.txt")), \
              patch.object(retry_link, "LEGACY_SUCCESS_COUNTS_PATH", os.path.join(self.temp.name, "counts.json")), \
              patch.object(retry_link, "VIEW_BUDGET_PATH", self.path), \
-             patch.object(retry_link, "fetch_current_views", return_value=10_150), \
+             patch.object(retry_link, "fetch_current_views") as fetch, \
              patch.object(retry_link, "process_link", return_value={
-                 1: "ok", 2: "active_order", 3: "ok"
+                 **{n: "ok" for n in range(1, 31)}, 2: "active_order"
              }), \
              patch.object(retry_link, "log"):
             result = retry_link.main()
 
         self.assertEqual(result, 0)
+        fetch.assert_not_called()
         self.assertFalse(os.path.exists(os.path.join(self.temp.name, "done.txt")))
-        entry = self.read_state()[self.link]
-        self.assertEqual(entry["reserved"], 250)
-        self.assertIn("active_order_until", entry)
+        self.assertFalse(os.path.exists(self.path))
 
 
 class ActiveOrderWorkflowOutcomeTests(unittest.TestCase):
