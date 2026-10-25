@@ -1,0 +1,53 @@
+name: Hasad Views Login Smoke Test (Accounts 1-10)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hasad-views
+  cancel-in-progress: false
+
+jobs:
+  login-smoke-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install browser dependencies
+        run: |
+          pip install requests playwright
+          playwright install --with-deps chromium
+
+      - name: Verify accounts 1-10 sequentially (login only)
+        run: python login_smoke_test.py
+        env:
+          SITE_USERNAME_1: ${{ secrets.SITE_USERNAME_1 }}
+          SITE_PASSWORD_1: ${{ secrets.SITE_PASSWORD_1 }}
+          SITE_USERNAME_2: ${{ secrets.SITE_USERNAME_2 }}
+          SITE_PASSWORD_2: ${{ secrets.SITE_PASSWORD_2 }}
+          SITE_USERNAME_3: ${{ secrets.SITE_USERNAME_3 }}
+          SITE_PASSWORD_3: ${{ secrets.SITE_PASSWORD_3 }}
+          SITE_USERNAME_4: ${{ secrets.SITE_USERNAME_4 }}
+          SITE_PASSWORD_4: ${{ secrets.SITE_PASSWORD_4 }}
+          SITE_USERNAME_5: ${{ secrets.SITE_USERNAME_5 }}
+          SITE_PASSWORD_5: ${{ secrets.SITE_PASSWORD_5 }}
+          SITE_USERNAME_6: ${{ secrets.SITE_USERNAME_6 }}
+          SITE_PASSWORD_6: ${{ secrets.SITE_PASSWORD_6 }}
+          SITE_USERNAME_7: ${{ secrets.SITE_USERNAME_7 }}
+          SITE_PASSWORD_7: ${{ secrets.SITE_PASSWORD_7 }}
+          SITE_USERNAME_8: ${{ secrets.SITE_USERNAME_8 }}
+          SITE_PASSWORD_8: ${{ secrets.SITE_PASSWORD_8 }}
+          SITE_USERNAME_9: ${{ secrets.SITE_USERNAME_9 }}
+          SITE_PASSWORD_9: ${{ secrets.SITE_PASSWORD_9 }}
+          SITE_USERNAME_10: ${{ secrets.SITE_USERNAME_10 }}
+          SITE_PASSWORD_10: ${{ secrets.SITE_PASSWORD_10 }}

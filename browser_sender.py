@@ -128,6 +128,16 @@ class BrowserSender:
             and p.locator("input[type='password']").first.is_visible()
         )
 
+    def verify_login(self):
+        """Authenticate only; do not open or submit the order form."""
+        if not self.logged_in:
+            self.logged_in = self._login()
+        if self.logged_in:
+            log("تم تسجيل الدخول بنجاح")
+        else:
+            log("فشل تسجيل الدخول")
+        return self.logged_in
+
     def _open_order_page(self):
         p = self.page
         self._goto(f"{SITE_URL}/?service={SERVICE_TEXT}")
