@@ -2,6 +2,15 @@ name: Hasad Views
 
 on:
   workflow_dispatch:
+    inputs:
+      account_count:
+        description: "16 لتشغيل كل الحسابات، أو 1 لتشغيل الحساب الأول فقط"
+        required: false
+        type: choice
+        options:
+          - "16"
+          - "1"
+        default: "16"
 
 permissions:
   contents: write
@@ -67,6 +76,7 @@ jobs:
           SITE_PASSWORD_15: ${{ secrets.SITE_PASSWORD_15 }}
           SITE_USERNAME_16: ${{ secrets.SITE_USERNAME_16 }}
           SITE_PASSWORD_16: ${{ secrets.SITE_PASSWORD_16 }}
+          ACCOUNT_COUNT: ${{ inputs.account_count || '16' }}
         run: python main.py
 
       - name: Commit state

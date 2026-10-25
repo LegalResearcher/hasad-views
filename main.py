@@ -28,7 +28,23 @@ NO_NEW_BATCH_CURSOR_PATH = os.path.join(STATE_DIR, "no_new_batch_cursor.json")
 VIEW_BUDGET_PATH = os.path.join(STATE_DIR, "view_budget.json")
 
 TARGET_CHANNEL = "hasadalyoum"
-ACCOUNT_COUNT = 16
+DEFAULT_ACCOUNT_COUNT = 16
+
+
+def parse_account_count(value):
+    """Allow a first-account run or the existing full 16-account run."""
+    if value is None or not str(value).strip():
+        return DEFAULT_ACCOUNT_COUNT
+    try:
+        count = int(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError("ACCOUNT_COUNT must be 1 or 16") from error
+    if count not in (1, DEFAULT_ACCOUNT_COUNT):
+        raise ValueError("ACCOUNT_COUNT must be 1 or 16")
+    return count
+
+
+ACCOUNT_COUNT = parse_account_count(os.environ.get("ACCOUNT_COUNT"))
 MAX_ATTEMPTS_PER_PAIR = 3
 MIN_REPEATED_LINKS_WITHOUT_NEW = 15
 
