@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       link:
-        description: "رابط منشور محدد لإعادة تشغيله (100 مشاهدة مدفوعة)"
+        description: "إعادة الرابط عبر الحسابات الـ16 بالتوازي (16 طلبًا × 100 مشاهدة مدفوعة)"
         required: true
         type: string
 
@@ -18,7 +18,7 @@ concurrency:
 jobs:
   retry-one-link:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
