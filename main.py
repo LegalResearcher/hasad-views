@@ -165,15 +165,28 @@ def summarize_run_results(results, links):
         for link in links
         if results.get(number, {}).get(link) in active_statuses
     }
+    unreadable = sum(
+        results.get(number, {}).get(link) == "view_unknown"
+        for number in range(1, ACCOUNT_COUNT + 1)
+        for link in links
+    )
+    unreadable_links = {
+        link
+        for number in range(1, ACCOUNT_COUNT + 1)
+        for link in links
+        if results.get(number, {}).get(link) == "view_unknown"
+    }
     expected = sum(
         results.get(number, {}).get(link)
-        not in (None, "capped", "active_order", "active_order_wait")
+        not in (None, "capped", "active_order", "active_order_wait", "view_unknown")
         for number in range(1, ACCOUNT_COUNT + 1)
         for link in links
     )
     log(
         f"انتهى التشغيل: نجح {successful} من أصل {expected} أزواج حساب/رابط؛ "
-        f"مؤجل بسبب طلب نشط {deferred} زوجًا عبر {len(deferred_links)} روابط."
+        f"مؤجل بسبب طلب نشط {deferred} زوجًا عبر {len(deferred_links)} روابط؛ "
+        f"تخطّي بسبب تعذر قراءة العداد: {unreadable} زوج حساب/رابط؛ "
+        f"عدد الروابط المتأثرة {len(unreadable_links)}."
     )
     return 0 if successful == expected else 1
 
