@@ -11,7 +11,7 @@ class AccountRotationTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.state_dir = self.temp.name
         self.env = {}
-        for number in range(1, 17):
+        for number in range(1, 31):
             self.env[f"SITE_USERNAME_{number}"] = f"user-{number}"
             self.env[f"SITE_PASSWORD_{number}"] = f"password-{number}"
 
@@ -20,11 +20,11 @@ class AccountRotationTests(unittest.TestCase):
 
     def test_round_robin_persists_and_wraps(self):
         selected_accounts = []
-        for _ in range(33):
+        for _ in range(61):
             account, username, password = select_rotating_account(self.env, self.state_dir)
             selected_accounts.append((account, username, password))
 
-        expected = list(range(1, 17)) + list(range(1, 17)) + [1]
+        expected = list(range(1, 31)) + list(range(1, 31)) + [1]
         self.assertEqual([item[0] for item in selected_accounts], expected)
         self.assertEqual([item[1] for item in selected_accounts], [f"user-{n}" for n in expected])
         self.assertEqual([item[2] for item in selected_accounts], [f"password-{n}" for n in expected])
@@ -46,11 +46,11 @@ class AccountRotationTests(unittest.TestCase):
     def test_invalid_cursor_fails_closed(self):
         cursor_path = os.path.join(self.state_dir, "account_rotation.json")
         with open(cursor_path, "w", encoding="utf-8") as file:
-            file.write('{"next_account": 17}\n')
+            file.write('{"next_account": 31}\n')
         with self.assertRaisesRegex(ValueError, "Invalid next_account"):
             select_rotating_account(self.env, self.state_dir)
         with open(cursor_path, "r", encoding="utf-8") as file:
-            self.assertEqual(json.load(file), {"next_account": 17})
+            self.assertEqual(json.load(file), {"next_account": 31})
 
 
 if __name__ == "__main__":

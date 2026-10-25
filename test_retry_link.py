@@ -16,11 +16,11 @@ class ParallelRetryTests(unittest.TestCase):
     def setUp(self):
         self.accounts = [
             (number, f"user-{number}", f"password-{number}")
-            for number in range(1, 17)
+            for number in range(1, 31)
         ]
         self.target = "https://t.me/hasadalyoum/12345"
         self.environ = {"TARGET_LINK": self.target}
-        for number in range(1, 17):
+        for number in range(1, 31):
             self.environ[f"SITE_USERNAME_{number}"] = f"user-{number}"
             self.environ[f"SITE_PASSWORD_{number}"] = f"password-{number}"
 
@@ -39,7 +39,7 @@ class ParallelRetryTests(unittest.TestCase):
         return result, process
 
     def test_process_link_uses_all_scheduled_accounts_concurrently(self):
-        barrier = threading.Barrier(16)
+        barrier = threading.Barrier(30)
         calls = []
         calls_lock = threading.Lock()
 
@@ -63,13 +63,13 @@ class ParallelRetryTests(unittest.TestCase):
         with patch.object(retry_link, "BrowserSender", BarrierSender):
             results = retry_link.process_link(scheduled, self.target)
 
-        self.assertEqual(set(results), set(range(1, 17)))
+        self.assertEqual(set(results), set(range(1, 31)))
         self.assertTrue(all(status == "ok" for status in results.values()))
-        self.assertEqual(len(calls), 16)
+        self.assertEqual(len(calls), 30)
         self.assertEqual({link for _, link, _ in calls}, {self.target})
         self.assertEqual({quantity for _, _, quantity in calls}, {25})
         self.assertEqual({username for username, _, _ in calls},
-                         {f"user-{number}" for number in range(1, 17)})
+                         {f"user-{number}" for number in range(1, 31)})
 
     def test_unreadable_counter_stops_manual_retry_before_sending(self):
         with tempfile.TemporaryDirectory() as temp, \
@@ -97,12 +97,12 @@ class ParallelRetryTests(unittest.TestCase):
         self.assertEqual(scheduled[0][0], self.accounts[0])
         self.assertEqual(scheduled[0][1], 50)
 
-    def test_manual_retry_requires_secrets_for_all_sixteen_accounts(self):
+    def test_manual_retry_requires_secrets_for_all_thirty_accounts(self):
         environ = {}
-        for number in range(1, 16):
+        for number in range(1, 30):
             environ[f"SITE_USERNAME_{number}"] = f"user-{number}"
             environ[f"SITE_PASSWORD_{number}"] = f"password-{number}"
-        with self.assertRaisesRegex(ValueError, "SITE_USERNAME_16, SITE_PASSWORD_16"):
+        with self.assertRaisesRegex(ValueError, "SITE_USERNAME_30, SITE_PASSWORD_30"):
             retry_link.load_accounts(environ)
 
 

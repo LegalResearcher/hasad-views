@@ -113,7 +113,7 @@ class ViewBudgetTests(unittest.TestCase):
             file.write(link + "\n")
         budget = self.budget(legacy_done_links_path=done_path)
         self.assertEqual(budget.reserve(link, 9_000), 0)
-        self.assertEqual(self.read_state()[link]["reserved"], 1_600)
+        self.assertEqual(self.read_state()[link]["reserved"], 3_000)
 
     def test_corrupt_budget_fails_closed(self):
         with open(self.path, "w", encoding="utf-8") as file:

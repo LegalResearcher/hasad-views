@@ -2,7 +2,7 @@ import json
 import os
 import tempfile
 
-ACCOUNT_COUNT = 16
+ACCOUNT_COUNT = 30
 
 
 def select_rotating_account(environ, state_dir):

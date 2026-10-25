@@ -70,6 +70,34 @@ jobs:
           SITE_PASSWORD_15: ${{ secrets.SITE_PASSWORD_15 }}
           SITE_USERNAME_16: ${{ secrets.SITE_USERNAME_16 }}
           SITE_PASSWORD_16: ${{ secrets.SITE_PASSWORD_16 }}
+          SITE_USERNAME_17: ${{ secrets.SITE_USERNAME_17 }}
+          SITE_PASSWORD_17: ${{ secrets.SITE_PASSWORD_17 }}
+          SITE_USERNAME_18: ${{ secrets.SITE_USERNAME_18 }}
+          SITE_PASSWORD_18: ${{ secrets.SITE_PASSWORD_18 }}
+          SITE_USERNAME_19: ${{ secrets.SITE_USERNAME_19 }}
+          SITE_PASSWORD_19: ${{ secrets.SITE_PASSWORD_19 }}
+          SITE_USERNAME_20: ${{ secrets.SITE_USERNAME_20 }}
+          SITE_PASSWORD_20: ${{ secrets.SITE_PASSWORD_20 }}
+          SITE_USERNAME_21: ${{ secrets.SITE_USERNAME_21 }}
+          SITE_PASSWORD_21: ${{ secrets.SITE_PASSWORD_21 }}
+          SITE_USERNAME_22: ${{ secrets.SITE_USERNAME_22 }}
+          SITE_PASSWORD_22: ${{ secrets.SITE_PASSWORD_22 }}
+          SITE_USERNAME_23: ${{ secrets.SITE_USERNAME_23 }}
+          SITE_PASSWORD_23: ${{ secrets.SITE_PASSWORD_23 }}
+          SITE_USERNAME_24: ${{ secrets.SITE_USERNAME_24 }}
+          SITE_PASSWORD_24: ${{ secrets.SITE_PASSWORD_24 }}
+          SITE_USERNAME_25: ${{ secrets.SITE_USERNAME_25 }}
+          SITE_PASSWORD_25: ${{ secrets.SITE_PASSWORD_25 }}
+          SITE_USERNAME_26: ${{ secrets.SITE_USERNAME_26 }}
+          SITE_PASSWORD_26: ${{ secrets.SITE_PASSWORD_26 }}
+          SITE_USERNAME_27: ${{ secrets.SITE_USERNAME_27 }}
+          SITE_PASSWORD_27: ${{ secrets.SITE_PASSWORD_27 }}
+          SITE_USERNAME_28: ${{ secrets.SITE_USERNAME_28 }}
+          SITE_PASSWORD_28: ${{ secrets.SITE_PASSWORD_28 }}
+          SITE_USERNAME_29: ${{ secrets.SITE_USERNAME_29 }}
+          SITE_PASSWORD_29: ${{ secrets.SITE_PASSWORD_29 }}
+          SITE_USERNAME_30: ${{ secrets.SITE_USERNAME_30 }}
+          SITE_PASSWORD_30: ${{ secrets.SITE_PASSWORD_30 }}
           TARGET_LINK: ${{ inputs.link }}
         run: python retry_link.py
       - name: Commit state

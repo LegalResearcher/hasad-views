@@ -12,7 +12,7 @@ from view_budget import (
     fetch_current_views,
 )
 
-ACCOUNT_COUNT = 16
+ACCOUNT_COUNT = 30
 LINK_PATTERN = re.compile(r"^https://t\.me/hasadalyoum/\d+$")
 STATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state")
 DONE_PATH = os.path.join(STATE_DIR, "done_links.txt")
