@@ -179,6 +179,21 @@ class ActiveOrderWorkflowOutcomeTests(unittest.TestCase):
         with patch.object(main, "log"):
             self.assertEqual(main.summarize_run_results(results, [link]), 0)
 
+    def test_unreadable_counter_is_reported_separately_and_does_not_fail(self):
+        link = "https://t.me/hasadalyoum/12345"
+        results = {1: {link: "ok"}}
+        results.update({number: {link: "view_unknown"} for number in range(2, 17)})
+
+        with patch.object(main, "log") as mocked_log:
+            self.assertEqual(main.summarize_run_results(results, [link]), 0)
+
+        messages = " ".join(call.args[0] for call in mocked_log.call_args_list)
+        self.assertIn("نجح 1 من أصل 1 أزواج حساب/رابط", messages)
+        self.assertIn(
+            "تخطّي بسبب تعذر قراءة العداد: 15 زوج حساب/رابط؛ عدد الروابط المتأثرة 1",
+            messages,
+        )
+
     def test_active_order_alone_does_not_fail_manual_retry(self):
         with patch.object(retry_link, "log"):
             self.assertEqual(
@@ -191,6 +206,7 @@ class ActiveOrderWorkflowOutcomeTests(unittest.TestCase):
             1: {link: "ok"},
             2: {link: "active_order"},
             3: {link: "fail"},
+            4: {link: "view_unknown"},
         }
         with patch.object(main, "log"):
             self.assertEqual(main.summarize_run_results(main_results, [link]), 1)
