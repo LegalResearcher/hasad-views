@@ -203,52 +203,62 @@
   },
   "https://t.me/hasadalyoum/24057": {
     "baseline": 2,
-    "max_observed": 903,
-    "reserved": 4800
+    "max_observed": 1600,
+    "reserved": 6400
   },
   "https://t.me/hasadalyoum/24058": {
     "baseline": 2,
-    "max_observed": 1390,
-    "reserved": 4800
+    "max_observed": 2290,
+    "reserved": 6400
   },
   "https://t.me/hasadalyoum/24059": {
     "baseline": 2,
-    "max_observed": 1970,
-    "reserved": 4800
+    "max_observed": 2270,
+    "reserved": 6400
   },
   "https://t.me/hasadalyoum/24060": {
     "baseline": 2,
-    "max_observed": 1420,
-    "reserved": 4800
+    "max_observed": 2020,
+    "reserved": 6400
   },
   "https://t.me/hasadalyoum/24061": {
     "baseline": 2,
-    "max_observed": 992,
-    "reserved": 4800
+    "max_observed": 1900,
+    "reserved": 6400
   },
   "https://t.me/hasadalyoum/24064": {
     "baseline": 2,
-    "max_observed": 1300,
-    "reserved": 4800
+    "max_observed": 2200,
+    "reserved": 6400
   },
   "https://t.me/hasadalyoum/24065": {
     "baseline": 2,
-    "max_observed": 1030,
-    "reserved": 4800
+    "max_observed": 1930,
+    "reserved": 6400
   },
   "https://t.me/hasadalyoum/24066": {
     "baseline": 2,
-    "max_observed": 1090,
-    "reserved": 4800
+    "max_observed": 1990,
+    "reserved": 6400
   },
   "https://t.me/hasadalyoum/24067": {
     "baseline": 2,
-    "max_observed": 1180,
-    "reserved": 4800
+    "max_observed": 1780,
+    "reserved": 6400
   },
   "https://t.me/hasadalyoum/24068": {
     "baseline": 1,
-    "max_observed": 1300,
-    "reserved": 4800
+    "max_observed": 1850,
+    "reserved": 6400
+  },
+  "https://t.me/hasadalyoum/24069": {
+    "baseline": 2,
+    "max_observed": 2,
+    "reserved": 1600
+  },
+  "https://t.me/hasadalyoum/24070": {
+    "baseline": 1,
+    "max_observed": 1,
+    "reserved": 1600
   }
 }
