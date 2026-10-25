@@ -7,7 +7,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 from browser_sender import BrowserSender
-from view_budget import MAX_TOTAL_VIEWS, ViewBudget, fetch_view_counts
+from view_budget import (
+    ActiveOrderDeferred,
+    MAX_TOTAL_VIEWS,
+    ViewBudget,
+    fetch_view_counts,
+)
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 STATE_DIR = os.path.join(ROOT, "state")
@@ -138,6 +143,41 @@ def pair_key(account_number, link):
     return f"{account_number}|{link}"
 
 
+def deferred_until_text(timestamp):
+    return time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(timestamp))
+
+
+def summarize_run_results(results, links):
+    active_statuses = {"active_order", "active_order_wait"}
+    successful = sum(
+        results.get(number, {}).get(link) == "ok"
+        for number in range(1, ACCOUNT_COUNT + 1)
+        for link in links
+    )
+    deferred = sum(
+        results.get(number, {}).get(link) in active_statuses
+        for number in range(1, ACCOUNT_COUNT + 1)
+        for link in links
+    )
+    deferred_links = {
+        link
+        for number in range(1, ACCOUNT_COUNT + 1)
+        for link in links
+        if results.get(number, {}).get(link) in active_statuses
+    }
+    expected = sum(
+        results.get(number, {}).get(link)
+        not in (None, "capped", "active_order", "active_order_wait")
+        for number in range(1, ACCOUNT_COUNT + 1)
+        for link in links
+    )
+    log(
+        f"انتهى التشغيل: نجح {successful} من أصل {expected} أزواج حساب/رابط؛ "
+        f"مؤجل بسبب طلب نشط {deferred} زوجًا عبر {len(deferred_links)} روابط."
+    )
+    return 0 if successful == expected else 1
+
+
 def no_new_group_count(previous_batches):
     older_batch_count = max(0, len(previous_batches) - 1)
     return max(1, (older_batch_count + 1) // 2)
@@ -223,6 +263,13 @@ def process_account(account, links, pair_done, attempts, forced_links,
                 current_count = current_views[link]
                 try:
                     quantity = view_budget.reserve(link, current_count)
+                except ActiveOrderDeferred as error:
+                    results[link] = "active_order_wait"
+                    log(
+                        f"الحساب {number}: تخطي {link}؛ يوجد طلب نشط، "
+                        f"ويعاد النظر بعد {deferred_until_text(error.deferred_until)}."
+                    )
+                    continue
                 except Exception as error:
                     results[link] = "budget_error"
                     log(f"الحساب {number}: تعذر حجز ميزانية {link}: {type(error).__name__}: {error}")
@@ -233,6 +280,24 @@ def process_account(account, links, pair_done, attempts, forced_links,
                     continue
                 log(f"الحساب {number}: معالجة {link}")
                 status = sender(link, quantity=quantity)
+                if status == "active_order":
+                    try:
+                        deferred_until = view_budget.record_active_order(
+                            link, account_number=number
+                        )
+                    except Exception as error:
+                        results[link] = "budget_error"
+                        log(
+                            f"الحساب {number}: تعذر حفظ تأجيل الطلب النشط لـ{link}: "
+                            f"{type(error).__name__}: {error}"
+                        )
+                    else:
+                        results[link] = "active_order"
+                        log(
+                            f"الحساب {number}: أُجّل {link} بسبب طلب نشط حتى "
+                            f"{deferred_until_text(deferred_until)}."
+                        )
+                    continue
                 results[link] = status
                 if status == "fatal":
                     for pending in work[index + 1:]:
@@ -317,20 +382,7 @@ def run_parallel(accounts, current_batch):
     )
     save_json(NO_NEW_BATCH_CURSOR_PATH, {"next_group": next_group})
 
-    successful_pairs = sum(
-        1
-        for number in range(1, ACCOUNT_COUNT + 1)
-        for link in links
-        if results.get(number, {}).get(link) == "ok"
-    )
-    expected_pairs = sum(
-        1
-        for number in range(1, ACCOUNT_COUNT + 1)
-        for link in links
-        if results.get(number, {}).get(link) not in (None, "capped")
-    )
-    log(f"انتهى التشغيل: نجح {successful_pairs} من أصل {expected_pairs} أزواج حساب/رابط.")
-    return 0 if successful_pairs == expected_pairs else 1
+    return summarize_run_results(results, links)
 
 
 def main():
