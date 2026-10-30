@@ -1,0 +1,129 @@
+name: Hasad Views
+
+on:
+  workflow_dispatch:
+    inputs:
+      queue_id:
+        description: "Central queue job id"
+        required: false
+        type: string
+      fencing_token:
+        description: "Central queue fencing token"
+        required: false
+        type: string
+      task_type:
+        description: "Central queue task type"
+        required: false
+        default: ""
+        type: string
+      link:
+        description: "Optional link payload"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: hasad-views
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Sync latest state
+        run: |
+          git fetch origin main
+          git reset --hard FETCH_HEAD
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install requests playwright
+          playwright install --with-deps chromium
+
+      - name: Queue manual request
+        if: ${{ inputs.queue_id == '' }}
+        env:
+          HASAD_TASK_TYPE: manual_run
+        run: python hasad_queue.py enqueue
+
+      - name: Claim central queue job
+        id: claim
+        if: ${{ inputs.queue_id != '' }}
+        env:
+          HASAD_QUEUE_ID: ${{ inputs.queue_id }}
+          HASAD_FENCING_TOKEN: ${{ inputs.fencing_token }}
+          HASAD_TASK_TYPE: ${{ inputs.task_type }}
+          TARGET_LINK: ${{ inputs.link }}
+        run: python hasad_queue.py claim
+
+      - name: Start queue heartbeat
+        if: ${{ steps.claim.outputs.process == 'true' }}
+        env:
+          HASAD_QUEUE_ID: ${{ inputs.queue_id }}
+          HASAD_FENCING_TOKEN: ${{ inputs.fencing_token }}
+        run: |
+          nohup python hasad_queue.py heartbeat > /tmp/hasad-heartbeat.log 2>&1 &
+          echo $! > /tmp/hasad-heartbeat.pid
+
+      - name: Run script
+        id: process
+        if: ${{ steps.claim.outputs.process == 'true' }}
+        env:
+          SITE_USERNAME_1: ${{ secrets.SITE_USERNAME_1 }}
+          SITE_PASSWORD_1: ${{ secrets.SITE_PASSWORD_1 }}
+          SITE_USERNAME_2: ${{ secrets.SITE_USERNAME_2 }}
+          SITE_PASSWORD_2: ${{ secrets.SITE_PASSWORD_2 }}
+          SITE_USERNAME_3: ${{ secrets.SITE_USERNAME_3 }}
+          SITE_PASSWORD_3: ${{ secrets.SITE_PASSWORD_3 }}
+          SITE_USERNAME_4: ${{ secrets.SITE_USERNAME_4 }}
+          SITE_PASSWORD_4: ${{ secrets.SITE_PASSWORD_4 }}
+          SITE_USERNAME_5: ${{ secrets.SITE_USERNAME_5 }}
+          SITE_PASSWORD_5: ${{ secrets.SITE_PASSWORD_5 }}
+          SITE_USERNAME_6: ${{ secrets.SITE_USERNAME_6 }}
+          SITE_PASSWORD_6: ${{ secrets.SITE_PASSWORD_6 }}
+          SITE_USERNAME_7: ${{ secrets.SITE_USERNAME_7 }}
+          SITE_PASSWORD_7: ${{ secrets.SITE_PASSWORD_7 }}
+          SITE_USERNAME_8: ${{ secrets.SITE_USERNAME_8 }}
+          SITE_PASSWORD_8: ${{ secrets.SITE_PASSWORD_8 }}
+          SITE_USERNAME_9: ${{ secrets.SITE_USERNAME_9 }}
+          SITE_PASSWORD_9: ${{ secrets.SITE_PASSWORD_9 }}
+          SITE_USERNAME_10: ${{ secrets.SITE_USERNAME_10 }}
+          SITE_PASSWORD_10: ${{ secrets.SITE_PASSWORD_10 }}
+        run: python main.py
+
+      - name: Complete central queue job
+        if: ${{ always() && steps.claim.outputs.process == 'true' }}
+        env:
+          HASAD_QUEUE_ID: ${{ inputs.queue_id }}
+          HASAD_FENCING_TOKEN: ${{ inputs.fencing_token }}
+          HASAD_SUCCESS: ${{ steps.process.outcome == 'success' }}
+        run: |
+          if [ -f /tmp/hasad-heartbeat.pid ]; then kill "$(cat /tmp/hasad-heartbeat.pid)" || true; fi
+          python hasad_queue.py complete
+
+      - name: Commit state
+        if: ${{ always() && steps.claim.outputs.process == 'true' }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state/
+          if git diff --cached --quiet; then
+            echo "No state changes."
+            exit 0
+          fi
+          git commit -m "chore: update state"
+          git pull --rebase
+          git push
