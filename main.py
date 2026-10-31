@@ -12,6 +12,8 @@ from processing_state import (
     load_failures,
     load_successes,
     mark_account_handled,
+    is_automation_paused,
+    pause_automation,
     record_result,
 )
 
@@ -119,6 +121,9 @@ def pending_links(links, account_number, state_dir=STATE_DIR):
 
 
 def run_browser_send(sender, state_dir=STATE_DIR, account_number=1, links=None):
+    if is_automation_paused(state_dir):
+        log("⏸️ الجدولة متوقفة مؤقتًا؛ لن تتم معالجة الروابط حتى إزالة علامة الإيقاف يدويًا.")
+        return 1
     """يعالج الجديد ثم الدفعة السابقة، ولا يكرر الرابط على الحساب نفسه."""
     batch = load_previous_batch(state_dir) if links is None else list(dict.fromkeys(links))
     queue = pending_links(batch, account_number, state_dir)
@@ -139,6 +144,7 @@ def run_browser_send(sender, state_dir=STATE_DIR, account_number=1, links=None):
         mark_account_handled(link, account_number, state_dir)
         status = sender(link)
         if status == "fatal":
+            pause_automation(state_dir, "fatal account/login/balance failure")
             log("⏹️ توقف: تعذر إكمال المعالجة بسبب حالة الحساب أو الرصيد.")
             return 1
         tries += 1
@@ -154,6 +160,9 @@ def run_browser_send(sender, state_dir=STATE_DIR, account_number=1, links=None):
 
 
 def main():
+    if is_automation_paused(STATE_DIR):
+        log("⏸️ الجدولة متوقفة مؤقتًا؛ احذف state/automation_paused وأعد تفعيل workflow يدويًا.")
+        return 1
     try:
         new_links = discover_new_links()
     except Exception as error:
