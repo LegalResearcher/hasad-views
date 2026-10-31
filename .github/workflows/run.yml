@@ -1,5 +1,5 @@
-name: Hasad Views Standalone
-run-name: Hasad Views standalone (${{ github.run_id }})
+name: Hasad Views Manual Run
+run-name: Hasad Views manual run (${{ github.run_id }})
 on:
   workflow_dispatch:
 permissions:
