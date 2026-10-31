@@ -48,10 +48,11 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
+      - name: Install Playwright and Xvfb
         run: |
           pip install requests playwright
           playwright install --with-deps chromium
+          sudo apt-get update && sudo apt-get install -y xvfb
 
       - name: Queue manual request
         if: ${{ inputs.queue_id == '' }}
@@ -100,9 +101,7 @@ jobs:
           SITE_PASSWORD_8: ${{ secrets.SITE_PASSWORD_8 }}
           SITE_USERNAME_9: ${{ secrets.SITE_USERNAME_9 }}
           SITE_PASSWORD_9: ${{ secrets.SITE_PASSWORD_9 }}
-          SITE_USERNAME_10: ${{ secrets.SITE_USERNAME_10 }}
-          SITE_PASSWORD_10: ${{ secrets.SITE_PASSWORD_10 }}
-        run: python main.py
+        run: xvfb-run -a --server-args="-screen 0 1440x900x24" python main.py
 
       - name: Complete central queue job
         if: ${{ always() && steps.claim.outputs.process == 'true' }}

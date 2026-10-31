@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import random
 import re
 import sys
 import tempfile
@@ -10,6 +11,14 @@ import requests
 
 from account_rotation import select_rotating_account
 from browser_sender import BrowserSender
+from processing_state import (
+    can_process,
+    load_account_history,
+    load_failures,
+    load_successes,
+    mark_account_handled,
+    record_result,
+)
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 STATE_DIR = os.path.join(ROOT, "state")
@@ -19,6 +28,7 @@ PROCESSED_PATH = os.path.join(STATE_DIR, "processed_links.txt")
 BATCH_HISTORY_PATH = os.path.join(STATE_DIR, "previous_batch_links.json")
 PREVIOUS_BATCH_FALLBACK_PATH = os.path.join(STATE_DIR, "previous_batch_fallback.json")
 TARGET_CHANNEL = "hasadalyoum"
+MAX_TRIES_PER_RUN = 9
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
@@ -162,30 +172,43 @@ def remove_from_queue(links):
     write_lines(LINKS_PATH, remaining)
 
 
-def run_browser_send(sender, links):
-    if not links:
+def run_browser_send(sender, links, account_number=1, state_dir=STATE_DIR):
+    history = load_account_history(state_dir)
+    successes = load_successes(state_dir)
+    failures_state = load_failures(state_dir)
+    queue = [link for link in dict.fromkeys(links)
+             if account_number not in history.get(link, [])
+             and can_process(link, state_dir, successes, failures_state)]
+    queue = queue[:MAX_TRIES_PER_RUN]
+    if not queue:
         log("💤 لا توجد روابط للتنفيذ.")
         return 0
     failures = 0
     processed_count = 0
-    for link in links:
+    for index, link in enumerate(queue):
+        if index > 0:
+            time.sleep(random.uniform(40, 150))
         log(f"معالجة الرابط مرة واحدة في هذه الدفعة: {link}")
         processed_count += 1
+        mark_account_handled(link, account_number, state_dir)
         try:
             status = sender(link)
         except Exception as error:
             log(f"⚠️ تعذر تنفيذ الرابط ({type(error).__name__}: {error})")
             status = "fail"
         if status == "ok":
+            _, result = record_result(link, status, state_dir)
             log("✅ نجح الرابط.")
         elif status == "fatal":
             log("⏹️ توقف: تحقق من بيانات الدخول أو الرصيد.")
-            failures += 1
             break
         else:
+            _, result = record_result(link, status, state_dir)
             log("⚠️ لم ينجح الطلب عبر الموقع.")
             failures += 1
-    remove_from_queue(links[:processed_count])
+            if result == "failure_limit":
+                log("🚫 تم تخطي الرابط بعد ثلاث محاولات فاشلة.")
+    remove_from_queue(queue[:processed_count])
     log(f"انتهى التشغيل بعد معالجة {processed_count} روابط.")
     return 1 if failures else 0
 
@@ -202,7 +225,7 @@ def main():
             f"الحساب رقم {account_number} من 9 | {len(links)} روابط"
         )
         with BrowserSender(username, password) as sender:
-            return run_browser_send(sender, links)
+            return run_browser_send(sender, links, account_number, STATE_DIR)
     except (OSError, ValueError) as error:
         log(f"❌ تعذر اختيار الحساب؛ تحقق من الأسرار وحالة account_rotation.json: {error}")
         return 1

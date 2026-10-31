@@ -11,7 +11,7 @@ class AccountRotationTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.state_dir = self.temp.name
         self.env = {}
-        for number in range(1, 11):
+        for number in range(1, 10):
             self.env[f"SITE_USERNAME_{number}"] = f"user-{number}"
             self.env[f"SITE_PASSWORD_{number}"] = f"password-{number}"
 
@@ -23,13 +23,14 @@ class AccountRotationTests(unittest.TestCase):
         for _ in range(22):
             selected.append(select_rotating_account(self.env, self.state_dir))
 
-        self.assertEqual([entry[0] for entry in selected], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 1, 2])
-        self.assertEqual([entry[1] for entry in selected], [f"user-{n}" for n in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 1, 2]])
-        self.assertEqual([entry[2] for entry in selected], [f"password-{n}" for n in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 1, 2]])
+        expected = list(range(1, 10)) + list(range(1, 10)) + [1, 2, 3, 4]
+        self.assertEqual([entry[0] for entry in selected], expected)
+        self.assertEqual([entry[1] for entry in selected], [f"user-{n}" for n in expected])
+        self.assertEqual([entry[2] for entry in selected], [f"password-{n}" for n in expected])
 
         cursor_path = os.path.join(self.state_dir, "account_rotation.json")
         with open(cursor_path, "r", encoding="utf-8") as file:
-            self.assertEqual(json.load(file), {"next_account": 3})
+            self.assertEqual(json.load(file), {"next_account": 5})
         with open(cursor_path, "r", encoding="utf-8") as file:
             saved = file.read()
         self.assertNotIn("user-", saved)
@@ -37,9 +38,12 @@ class AccountRotationTests(unittest.TestCase):
 
     def test_missing_secret_fails_without_advancing(self):
         del self.env["SITE_PASSWORD_2"]
+        with open(os.path.join(self.state_dir, "account_rotation.json"), "w", encoding="utf-8") as file:
+            json.dump({"next_account": 2}, file)
         with self.assertRaisesRegex(ValueError, "SITE_PASSWORD_2"):
             select_rotating_account(self.env, self.state_dir)
-        self.assertFalse(os.path.exists(os.path.join(self.state_dir, "account_rotation.json")))
+        with open(os.path.join(self.state_dir, "account_rotation.json"), "r", encoding="utf-8") as file:
+            self.assertEqual(json.load(file), {"next_account": 2})
 
     def test_invalid_cursor_fails_closed(self):
         cursor_path = os.path.join(self.state_dir, "account_rotation.json")
