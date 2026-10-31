@@ -14,7 +14,7 @@
 - الحساب 8: `SITE_USERNAME_8` و`SITE_PASSWORD_8`
 - الحساب 9: `SITE_USERNAME_9` و`SITE_PASSWORD_9`
 
-تشغيل رئيسي يدوي: Actions > Hasad Views > Run workflow.
+تشغيل رئيسي يدوي: Actions > Hasad Views Standalone > Run workflow.
 إعادة محاولة رابط محدد: Actions > Hasad Views - Manual Link Retry > Run workflow.
 
 ## كيف يعمل

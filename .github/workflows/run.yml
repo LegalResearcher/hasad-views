@@ -1,35 +1,12 @@
-name: Hasad Views
-
+name: Hasad Views Standalone
+run-name: Hasad Views standalone (${{ github.run_id }})
 on:
   workflow_dispatch:
-    inputs:
-      queue_id:
-        description: "Central queue job id"
-        required: false
-        type: string
-      fencing_token:
-        description: "Central queue fencing token"
-        required: false
-        type: string
-      task_type:
-        description: "Central queue task type"
-        required: false
-        default: ""
-        type: string
-      link:
-        description: "Optional link payload"
-        required: false
-        default: ""
-        type: string
-
 permissions:
   contents: write
-  id-token: write
-
 concurrency:
   group: hasad-views
   cancel-in-progress: false
-
 jobs:
   run:
     runs-on: ubuntu-latest
@@ -37,51 +14,18 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Sync latest state
-        run: |
-          git fetch origin main
-          git reset --hard FETCH_HEAD
-
+        with:
+          ref: main
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Install Playwright and Xvfb
+      - name: Install dependencies and Xvfb
         run: |
           pip install requests playwright
           playwright install --with-deps chromium
           sudo apt-get update && sudo apt-get install -y xvfb
-
-      - name: Queue manual request
-        if: ${{ inputs.queue_id == '' }}
-        env:
-          HASAD_TASK_TYPE: manual_run
-        run: python hasad_queue.py enqueue
-
-      - name: Claim central queue job
-        id: claim
-        if: ${{ inputs.queue_id != '' }}
-        env:
-          HASAD_QUEUE_ID: ${{ inputs.queue_id }}
-          HASAD_FENCING_TOKEN: ${{ inputs.fencing_token }}
-          HASAD_TASK_TYPE: ${{ inputs.task_type }}
-          TARGET_LINK: ${{ inputs.link }}
-        run: python hasad_queue.py claim
-
-      - name: Start queue heartbeat
-        if: ${{ steps.claim.outputs.process == 'true' }}
-        env:
-          HASAD_QUEUE_ID: ${{ inputs.queue_id }}
-          HASAD_FENCING_TOKEN: ${{ inputs.fencing_token }}
-        run: |
-          nohup python hasad_queue.py heartbeat > /tmp/hasad-heartbeat.log 2>&1 &
-          echo $! > /tmp/hasad-heartbeat.pid
-
-      - name: Run script
-        id: process
-        if: ${{ steps.claim.outputs.process == 'true' }}
+      - name: Run standalone processing
         env:
           SITE_USERNAME_1: ${{ secrets.SITE_USERNAME_1 }}
           SITE_PASSWORD_1: ${{ secrets.SITE_PASSWORD_1 }}
@@ -102,19 +46,8 @@ jobs:
           SITE_USERNAME_9: ${{ secrets.SITE_USERNAME_9 }}
           SITE_PASSWORD_9: ${{ secrets.SITE_PASSWORD_9 }}
         run: xvfb-run -a --server-args="-screen 0 1440x900x24" python main.py
-
-      - name: Complete central queue job
-        if: ${{ always() && steps.claim.outputs.process == 'true' }}
-        env:
-          HASAD_QUEUE_ID: ${{ inputs.queue_id }}
-          HASAD_FENCING_TOKEN: ${{ inputs.fencing_token }}
-          HASAD_SUCCESS: ${{ steps.process.outcome == 'success' }}
-        run: |
-          if [ -f /tmp/hasad-heartbeat.pid ]; then kill "$(cat /tmp/hasad-heartbeat.pid)" || true; fi
-          python hasad_queue.py complete
-
       - name: Commit state
-        if: ${{ always() && steps.claim.outputs.process == 'true' }}
+        if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -123,6 +56,6 @@ jobs:
             echo "No state changes."
             exit 0
           fi
-          git commit -m "chore: update state"
-          git pull --rebase
-          git push
+          git commit -m "chore: update state from standalone run"
+          git pull --rebase origin main
+          git push origin HEAD:main

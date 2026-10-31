@@ -1,155 +1,102 @@
+import json
 import os
 import tempfile
 import unittest
 from unittest.mock import patch
-
-import main
+from main import (
+    discover_new_links,
+    load_previous_batch,
+    pending_links,
+    prepare_run_batch,
+    run_browser_send,
+)
+from processing_state import load_account_history
 
 
 class FakeSender:
-    def __init__(self, status="ok"):
-        self.status = status
+    def __init__(self, outcomes=None):
+        self.outcomes = list(outcomes or [])
         self.calls = []
 
     def __call__(self, link):
         self.calls.append(link)
-        return self.status
+        return self.outcomes.pop(0) if self.outcomes else "ok"
 
 
-class BatchProcessingTests(unittest.TestCase):
+class ProcessingTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.state = self.temp.name
+        self.links = [f"https://t.me/hasadalyoum/{number}" for number in range(1, 8)]
         self.sleep_patch = patch("main.time.sleep", return_value=None)
         self.sleep_patch.start()
-        self.old_paths = (
-            main.LINKS_PATH,
-            main.PROCESSED_PATH,
-            main.BATCH_HISTORY_PATH,
-            main.PREVIOUS_BATCH_FALLBACK_PATH,
-        )
-        main.LINKS_PATH = os.path.join(self.state, "telegram_links.txt")
-        main.PROCESSED_PATH = os.path.join(self.state, "processed_links.txt")
-        main.BATCH_HISTORY_PATH = os.path.join(self.state, "previous_batch_links.json")
-        main.PREVIOUS_BATCH_FALLBACK_PATH = os.path.join(self.state, "previous_batch_fallback.json")
-        for path in (main.LINKS_PATH, main.PROCESSED_PATH):
-            open(path, "w", encoding="utf-8").close()
 
     def tearDown(self):
         self.sleep_patch.stop()
-        (
-            main.LINKS_PATH,
-            main.PROCESSED_PATH,
-            main.BATCH_HISTORY_PATH,
-            main.PREVIOUS_BATCH_FALLBACK_PATH,
-        ) = self.old_paths
         self.temp.cleanup()
 
-    def test_first_run_processes_all_new_links_once(self):
-        batch = [f"https://t.me/hasadalyoum/{number}" for number in range(1, 8)]
-        with patch.object(main, "fetch_links", return_value=batch):
-            selected = main.pull_once()
+    def test_new_links_precede_previous_batch_and_are_deduplicated(self):
+        with open(os.path.join(self.state, "previous_batch.json"), "w", encoding="utf-8") as file:
+            json.dump([self.links[0], self.links[1]], file)
+        batch = prepare_run_batch([self.links[2], self.links[0]], self.state)
+        self.assertEqual(batch, [self.links[2], self.links[0], self.links[1]])
+        self.assertEqual(load_previous_batch(self.state), batch)
+
+    def test_legacy_queue_migration_only_keeps_first_nine_incomplete_links(self):
+        with open(os.path.join(self.state, "telegram_links.txt"), "w", encoding="utf-8") as file:
+            file.write("\n".join(self.links) + "\n")
+        with open(os.path.join(self.state, "success_counts.json"), "w", encoding="utf-8") as file:
+            json.dump({self.links[0]: 9}, file)
+        migrated = load_previous_batch(self.state)
+        self.assertEqual(migrated, self.links[1:])
+
+    def test_only_new_links_are_discovered_once(self):
+        found = discover_new_links(self.state, [self.links[0], self.links[1]])
+        self.assertEqual(found, self.links[:2])
+        self.assertEqual(discover_new_links(self.state, [self.links[0], self.links[1], self.links[2]]), [self.links[2]])
+
+    def test_account_is_not_given_same_link_twice_but_next_account_can_process_it(self):
+        batch = self.links[:2]
+        first = FakeSender()
+        self.assertEqual(run_browser_send(first, self.state, 1, batch), 0)
+        self.assertEqual(first.calls, batch)
+        repeated = FakeSender()
+        self.assertEqual(run_browser_send(repeated, self.state, 1, batch), 0)
+        self.assertEqual(repeated.calls, [])
+        next_account = FakeSender()
+        self.assertEqual(run_browser_send(next_account, self.state, 2, batch), 0)
+        self.assertEqual(next_account.calls, batch)
+        self.assertEqual(load_account_history(self.state), {link: [1, 2] for link in batch})
+
+    def test_failed_attempt_is_still_recorded_for_that_account(self):
+        sender = FakeSender(["fail"])
+        run_browser_send(sender, self.state, 3, [self.links[0]])
+        self.assertEqual(pending_links([self.links[0]], 3, self.state), [])
+        self.assertEqual(pending_links([self.links[0]], 4, self.state), [self.links[0]])
+
+    def test_scheduled_run_skips_links_at_success_or_failure_limit(self):
+        with open(os.path.join(self.state, "success_counts.json"), "w", encoding="utf-8") as file:
+            json.dump({self.links[0]: 9}, file)
+        with open(os.path.join(self.state, "failed_attempts.json"), "w", encoding="utf-8") as file:
+            json.dump({self.links[1]: 3}, file)
+
         sender = FakeSender()
-        self.assertEqual(main.run_browser_send(sender, selected, state_dir=self.state), 0)
-        self.assertEqual(sender.calls, batch)
-        self.assertEqual(main.read_lines(main.LINKS_PATH), [])
+        run_browser_send(sender, self.state, 1, self.links[:3])
 
-    def test_next_run_processes_new_batch_then_previous_batch(self):
-        first = ["https://t.me/hasadalyoum/1", "https://t.me/hasadalyoum/2"]
-        second = ["https://t.me/hasadalyoum/3", "https://t.me/hasadalyoum/4"]
-        with patch.object(main, "fetch_links", return_value=first):
-            selected_first = main.pull_once()
-        main.run_browser_send(FakeSender(), selected_first, account_number=1, state_dir=self.state)
-        with patch.object(main, "fetch_links", return_value=first + second):
-            selected_second = main.pull_once()
-        self.assertEqual(selected_second, second + first)
-        sender = FakeSender()
-        self.assertEqual(main.run_browser_send(sender, selected_second, account_number=2, state_dir=self.state), 0)
-        self.assertEqual(sender.calls, second + first)
+        self.assertEqual(sender.calls, [self.links[2]])
 
-    def test_no_new_posts_reprocesses_last_two_batches_once(self):
-        first = ["https://t.me/hasadalyoum/11", "https://t.me/hasadalyoum/12"]
-        second = ["https://t.me/hasadalyoum/13"]
-        with patch.object(main, "fetch_links", return_value=first):
-            main.run_browser_send(FakeSender(), main.pull_once(), account_number=1, state_dir=self.state)
-        with patch.object(main, "fetch_links", return_value=first + second):
-            new_selection = main.pull_once()
-        self.assertEqual(new_selection, second + first)
-        main.run_browser_send(FakeSender(), new_selection, account_number=2, state_dir=self.state)
-
-        with patch.object(main, "fetch_links", return_value=first + second):
-            fallback_selection = main.pull_once()
-        self.assertEqual(fallback_selection, second + first)
-        sender = FakeSender()
-        self.assertEqual(main.run_browser_send(sender, fallback_selection, account_number=3, state_dir=self.state), 0)
-        self.assertEqual(sender.calls, second + first)
-
-        with patch.object(main, "fetch_links", return_value=first + second):
-            self.assertEqual(main.pull_once(), [])
-
-    def test_new_batch_allows_one_fallback_again(self):
-        first = ["https://t.me/hasadalyoum/21"]
-        second = ["https://t.me/hasadalyoum/22"]
-        with patch.object(main, "fetch_links", return_value=first):
-            main.run_browser_send(FakeSender(), main.pull_once(), state_dir=self.state)
-        with patch.object(main, "fetch_links", return_value=first):
-            fallback = main.pull_once()
-        self.assertEqual(fallback, first)
-        main.run_browser_send(FakeSender(), fallback, account_number=2, state_dir=self.state)
-        with patch.object(main, "fetch_links", return_value=first):
-            self.assertEqual(main.pull_once(), [])
-
-        with patch.object(main, "fetch_links", return_value=first + second):
-            new_batch = main.pull_once()
-        self.assertEqual(new_batch, second + first)
-        main.run_browser_send(FakeSender(), new_batch, account_number=3, state_dir=self.state)
-        with patch.object(main, "fetch_links", return_value=first + second):
-            next_fallback = main.pull_once()
-        self.assertEqual(next_fallback, second + first)
-        with patch.object(main, "fetch_links", return_value=first + second):
-            self.assertEqual(main.pull_once(), [])
-
-    def test_third_run_uses_immediate_previous_batch_only(self):
-        first = ["https://t.me/hasadalyoum/1"]
-        second = ["https://t.me/hasadalyoum/2"]
-        third = ["https://t.me/hasadalyoum/3"]
-        with patch.object(main, "fetch_links", return_value=first):
-            main.run_browser_send(FakeSender(), main.pull_once(), state_dir=self.state)
-        with patch.object(main, "fetch_links", return_value=first + second):
-            main.run_browser_send(FakeSender(), main.pull_once(), state_dir=self.state)
-        with patch.object(main, "fetch_links", return_value=first + second + third):
-            selected = main.pull_once()
-        self.assertEqual(selected, third + second)
-        self.assertNotIn(first[0], selected)
-
-    def test_run_is_limited_to_nine_requests(self):
+    def test_run_is_limited_to_nine_requests_and_remaining_links_stay_in_batch(self):
         batch = [f"https://t.me/hasadalyoum/{number}" for number in range(1, 12)]
         sender = FakeSender()
-        self.assertEqual(main.run_browser_send(sender, batch, state_dir=self.state), 0)
+        run_browser_send(sender, self.state, 1, batch)
         self.assertEqual(sender.calls, batch[:9])
+        self.assertEqual(pending_links(batch, 1, self.state), batch[9:])
 
-    def test_scheduled_run_skips_success_and_failure_limits(self):
-        batch = [f"https://t.me/hasadalyoum/{number}" for number in range(1, 4)]
-        with open(os.path.join(self.state, "success_counts.json"), "w", encoding="utf-8") as file:
-            file.write('{"' + batch[0] + '": 9}\n')
-        with open(os.path.join(self.state, "failed_attempts.json"), "w", encoding="utf-8") as file:
-            file.write('{"' + batch[1] + '": 3}\n')
-
-        sender = FakeSender()
-        main.run_browser_send(sender, batch, state_dir=self.state)
-        self.assertEqual(sender.calls, [batch[2]])
-
-    def test_same_account_does_not_receive_same_link_twice(self):
-        link = "https://t.me/hasadalyoum/99"
-        first = FakeSender()
-        main.run_browser_send(first, [link], account_number=1, state_dir=self.state)
-        repeated = FakeSender()
-        main.run_browser_send(repeated, [link], account_number=1, state_dir=self.state)
-        next_account = FakeSender()
-        main.run_browser_send(next_account, [link], account_number=2, state_dir=self.state)
-        self.assertEqual(first.calls, [link])
-        self.assertEqual(repeated.calls, [])
-        self.assertEqual(next_account.calls, [link])
+    def test_fatal_result_does_not_retry_link_on_same_account(self):
+        sender = FakeSender(["fatal"])
+        self.assertEqual(run_browser_send(sender, self.state, 5, [self.links[0]]), 1)
+        self.assertEqual(pending_links([self.links[0]], 5, self.state), [])
+        self.assertEqual(pending_links([self.links[0]], 1, self.state), [self.links[0]])
 
 
 if __name__ == "__main__":
