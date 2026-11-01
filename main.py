@@ -22,7 +22,6 @@ STATE_DIR = os.path.join(ROOT, "state")
 os.makedirs(STATE_DIR, exist_ok=True)
 PROCESSED_PATH = os.path.join(STATE_DIR, "processed_links.txt")
 TARGET_CHANNEL = "hasadalyoum"
-MAX_TRIES_PER_RUN = 9
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
@@ -58,7 +57,7 @@ def load_previous_batch(state_dir=STATE_DIR):
         failures = load_failures(state_dir)
         eligible = [link for link in legacy_links
                     if can_process(link, state_dir, successes, failures)]
-        return eligible[:MAX_TRIES_PER_RUN]
+        return eligible
     try:
         with open(path, "r", encoding="utf-8") as file:
             value = json.load(file)
@@ -129,12 +128,13 @@ def run_browser_send(sender, state_dir=STATE_DIR, account_number=1, links=None):
     queue = pending_links(batch, account_number, state_dir)
     if not queue:
         log(f"💤 لا روابط متاحة للحساب {account_number} ضمن الدفعة الحالية.")
+        successes = load_successes(state_dir)
+        failures = load_failures(state_dir)
+        save_previous_batch([link for link in batch if can_process(link, state_dir, successes, failures)], state_dir)
         return 0
-    log(f"📋 روابط مؤهلة للحساب {account_number}: {len(queue)}؛ حد التشغيل {MAX_TRIES_PER_RUN} طلبات.")
+    log(f"📋 روابط مؤهلة للحساب {account_number}: {len(queue)}؛ ستتم معالجة الدفعة كاملة.")
     tries = 0
     for link in queue:
-        if tries >= MAX_TRIES_PER_RUN:
-            break
         if tries > 0:
             delay = random.uniform(40, 150)
             log(f"انتظار {delay:.1f} ثانية قبل الطلب التالي.")
@@ -146,6 +146,7 @@ def run_browser_send(sender, state_dir=STATE_DIR, account_number=1, links=None):
         if status == "fatal":
             pause_automation(state_dir, "fatal account/login/balance failure")
             log("⏹️ توقف: تعذر إكمال المعالجة بسبب حالة الحساب أو الرصيد.")
+            save_previous_batch([item for item in batch if can_process(item, state_dir)], state_dir)
             return 1
         tries += 1
         _, result = record_result(link, status, state_dir)
@@ -156,6 +157,9 @@ def run_browser_send(sender, state_dir=STATE_DIR, account_number=1, links=None):
                 log("🚫 تم تخطي الرابط بعد ثلاث محاولات فاشلة.")
             log(f"⚠️ فشلت محاولة الرابط على الحساب {account_number}؛ سيُترك للحسابات التالية.")
     log(f"انتهى التشغيل بعد {tries} طلبات.")
+    successes = load_successes(state_dir)
+    failures = load_failures(state_dir)
+    save_previous_batch([link for link in batch if can_process(link, state_dir, successes, failures)], state_dir)
     return 0
 
 
@@ -168,12 +172,28 @@ def main():
     except Exception as error:
         log(f"❌ خطأ في السحب: {type(error).__name__}: {error}")
         new_links = []
-    batch = prepare_run_batch(new_links)
-    if not batch:
+    batch = prepare_run_batch(new_links, STATE_DIR)
+    successes = load_successes(STATE_DIR)
+    failures = load_failures(STATE_DIR)
+    eligible = [link for link in batch if can_process(link, STATE_DIR, successes, failures)]
+    if not eligible:
+        save_previous_batch([], STATE_DIR)
         log("💤 لا توجد روابط جديدة أو في الدفعة السابقة.")
         return 0
+    candidate_accounts = [number for number in range(1, 10)
+                          if pending_links(eligible, number, STATE_DIR)]
+    if not candidate_accounts:
+        save_previous_batch(eligible, STATE_DIR)
+        log("💤 لا توجد روابط مؤهلة لأي حساب.")
+        return 0
     try:
-        account_number, username, password = select_rotating_account(os.environ, STATE_DIR)
+        account = select_rotating_account(os.environ, STATE_DIR,
+            lambda number: number in candidate_accounts)
+        if account is None:
+            save_previous_batch(eligible, STATE_DIR)
+            log("💤 لا توجد روابط مؤهلة لأي حساب.")
+            return 0
+        account_number, username, password = account
     except (OSError, ValueError) as error:
         log(f"❌ تعذر اختيار حساب؛ تحقق من الأسرار التسعة وحالة account_rotation.json: {error}")
         return 1

@@ -42,6 +42,24 @@ class AccountRotationTests(unittest.TestCase):
             select_rotating_account(self.env, self.state_dir)
         self.assertFalse(os.path.exists(os.path.join(self.state_dir, "account_rotation.json")))
 
+    def test_rotation_selects_next_eligible_account_from_cursor(self):
+        cursor_path = os.path.join(self.state_dir, "account_rotation.json")
+        with open(cursor_path, "w", encoding="utf-8") as file:
+            json.dump({"next_account": 3}, file)
+        selected = select_rotating_account(self.env, self.state_dir,
+                                           lambda number: number in {5, 8})
+        self.assertEqual(selected, (5, "user-5", "password-5"))
+        with open(cursor_path, "r", encoding="utf-8") as file:
+            self.assertEqual(json.load(file), {"next_account": 6})
+
+    def test_no_eligible_account_does_not_advance_cursor(self):
+        cursor_path = os.path.join(self.state_dir, "account_rotation.json")
+        with open(cursor_path, "w", encoding="utf-8") as file:
+            json.dump({"next_account": 4}, file)
+        self.assertIsNone(select_rotating_account(self.env, self.state_dir, lambda _: False))
+        with open(cursor_path, "r", encoding="utf-8") as file:
+            self.assertEqual(json.load(file), {"next_account": 4})
+
     def test_invalid_cursor_fails_closed(self):
         cursor_path = os.path.join(self.state_dir, "account_rotation.json")
         with open(cursor_path, "w", encoding="utf-8") as file:

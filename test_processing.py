@@ -43,7 +43,7 @@ class ProcessingTests(unittest.TestCase):
         self.assertEqual(batch, [self.links[2], self.links[0], self.links[1]])
         self.assertEqual(load_previous_batch(self.state), batch)
 
-    def test_legacy_queue_migration_only_keeps_first_nine_incomplete_links(self):
+    def test_legacy_queue_migration_keeps_all_incomplete_links(self):
         with open(os.path.join(self.state, "telegram_links.txt"), "w", encoding="utf-8") as file:
             file.write("\n".join(self.links) + "\n")
         with open(os.path.join(self.state, "success_counts.json"), "w", encoding="utf-8") as file:
@@ -86,12 +86,35 @@ class ProcessingTests(unittest.TestCase):
 
         self.assertEqual(sender.calls, [self.links[2]])
 
-    def test_run_is_limited_to_nine_requests_and_remaining_links_stay_in_batch(self):
-        batch = [f"https://t.me/hasadalyoum/{number}" for number in range(1, 12)]
+    def test_run_processes_more_than_old_nine_request_limit(self):
+        batch = [f"https://t.me/hasadalyoum/{number}" for number in range(1, 15)]
         sender = FakeSender()
         run_browser_send(sender, self.state, 1, batch)
-        self.assertEqual(sender.calls, batch[:9])
-        self.assertEqual(pending_links(batch, 1, self.state), batch[9:])
+        self.assertEqual(sender.calls, batch)
+        self.assertEqual(load_previous_batch(self.state), batch)
+
+    def test_exhausted_links_are_removed_from_previous_batch(self):
+        batch = self.links[:3]
+        with open(os.path.join(self.state, "done_links.txt"), "w", encoding="utf-8") as file:
+            file.write(batch[0] + "\n")
+        with open(os.path.join(self.state, "failed_attempts.json"), "w", encoding="utf-8") as file:
+            json.dump({batch[1]: 3}, file)
+        sender = FakeSender()
+        run_browser_send(sender, self.state, 1, batch)
+        self.assertEqual(sender.calls, [batch[2]])
+        self.assertEqual(load_previous_batch(self.state), [batch[2]])
+
+    def test_no_work_returns_before_account_selection_and_browser_sender(self):
+        with open(os.path.join(self.state, "previous_batch.json"), "w", encoding="utf-8") as file:
+            json.dump([self.links[0]], file)
+        with open(os.path.join(self.state, "done_links.txt"), "w", encoding="utf-8") as file:
+            file.write(self.links[0] + "\n")
+        with patch("main.STATE_DIR", self.state), patch("main.discover_new_links", return_value=[]), \
+                patch("main.select_rotating_account", side_effect=AssertionError("should not select")), \
+                patch("browser_sender.BrowserSender", side_effect=AssertionError("should not open")):
+            from main import main
+            self.assertEqual(main(), 0)
+        self.assertEqual(load_previous_batch(self.state), [])
 
     def test_manual_retry_is_blocked_while_automation_is_paused(self):
         pause_automation(self.state, "test pause")
