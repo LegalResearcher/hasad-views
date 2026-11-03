@@ -2,10 +2,10 @@ import json
 import os
 import tempfile
 
-ACCOUNT_COUNT = 9
+ACCOUNT_COUNT = 3
 
 
-def select_rotating_account(environ, state_dir, has_work=None):
+def select_rotating_account(environ, state_dir):
     """Select one configured account and persist the next account number.
 
     Scheduled and manual workflows share this cursor through state/.
@@ -38,11 +38,6 @@ def select_rotating_account(environ, state_dir, has_work=None):
             raise ValueError("Invalid next_account in account_rotation.json")
 
     selected = next_account
-    if has_work is not None:
-        selected = next((number for offset in range(ACCOUNT_COUNT)
-                         if has_work(number := (next_account - 1 + offset) % ACCOUNT_COUNT + 1)), None)
-        if selected is None:
-            return None
     following = selected % ACCOUNT_COUNT + 1
     fd, temporary_path = tempfile.mkstemp(prefix=".account-rotation-", dir=state_dir)
     try:
