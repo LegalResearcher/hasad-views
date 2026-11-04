@@ -6,8 +6,9 @@ from account_rotation import select_rotating_account
 from browser_sender import BrowserSender
 
 STATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state")
-TARGET_CHANNEL = "hasadalyoum"
-LINK_PATTERN = re.compile(rf"^https://t\.me/{TARGET_CHANNEL}/\d+$")
+TARGET_CHANNELS = ("aljnoubvoice", "shmsannews", "SanaaPressAgency")
+CHANNEL_PATTERN = "|".join(re.escape(channel) for channel in TARGET_CHANNELS)
+LINK_PATTERN = re.compile(rf"^https://t\.me/(?:{CHANNEL_PATTERN})/\d+$")
 
 
 def log(message):
@@ -29,7 +30,8 @@ def process_manual_retry(link, sender):
 def main():
     link = os.environ.get("TARGET_LINK", "").strip()
     if not LINK_PATTERN.fullmatch(link):
-        log(f"❌ الرابط غير صالح؛ يلزم رابط منشور من قناة {TARGET_CHANNEL}.")
+        channels = ", ".join(TARGET_CHANNELS)
+        log(f"❌ الرابط غير صالح؛ يلزم رابط منشور من إحدى القنوات: {channels}.")
         return 2
     try:
         account_number, username, password = select_rotating_account(os.environ, STATE_DIR)

@@ -22,7 +22,7 @@ STATE_DIR = os.path.join(ROOT, "state")
 os.makedirs(STATE_DIR, exist_ok=True)
 LINKS_PATH = os.path.join(STATE_DIR, "telegram_links.txt")
 PROCESSED_PATH = os.path.join(STATE_DIR, "processed_links.txt")
-TARGET_CHANNEL = "hasadalyoum"
+TARGET_CHANNELS = ("aljnoubvoice", "shmsannews", "SanaaPressAgency")
 ACCOUNT_COUNT = 5
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 "
@@ -32,6 +32,11 @@ HEADERS = {
 
 def log(message):
     print(f"[{time.strftime('%H:%M:%S')}] {message}", flush=True)
+
+
+def is_target_link(link):
+    channels = "|".join(re.escape(channel) for channel in TARGET_CHANNELS)
+    return bool(re.fullmatch(rf"https://t\.me/(?:{channels})/\d+", link))
 
 
 def read_lines(path):
@@ -64,32 +69,47 @@ def append_unique(path, links):
         write_lines(path, existing + additions)
 
 
-def fetch_links():
-    response = requests.get(
-        f"https://t.me/s/{TARGET_CHANNEL}", headers=HEADERS, timeout=30
-    )
+def fetch_links(channel):
+    response = requests.get(f"https://t.me/s/{channel}", headers=HEADERS, timeout=30)
     if response.status_code != 200:
-        raise RuntimeError(f"Telegram returned HTTP {response.status_code}")
+        raise RuntimeError(f"Telegram @{channel} returned HTTP {response.status_code}")
     ids = sorted({int(value) for value in re.findall(
-        rf"/{re.escape(TARGET_CHANNEL)}/(\d+)", response.text
+        rf"/{re.escape(channel)}/(\d+)", response.text
     )})
-    return [f"https://t.me/{TARGET_CHANNEL}/{number}" for number in ids]
+    return [f"https://t.me/{channel}/{number}" for number in ids]
 
 
 def pull_once():
-    discovered = fetch_links()
+    discovered = []
+    successful_channels = 0
+    for channel in TARGET_CHANNELS:
+        try:
+            discovered.extend(fetch_links(channel))
+            successful_channels += 1
+        except Exception as error:
+            log(f"⚠️ تعذر سحب قناة @{channel} ({type(error).__name__}: {error})")
+    if successful_channels == 0:
+        raise RuntimeError("تعذر سحب الروابط من جميع القنوات المستهدفة")
+    discovered = list(dict.fromkeys(discovered))
     processed = set(read_lines(PROCESSED_PATH))
     current_batch = [link for link in discovered if link not in processed]
     if not current_batch:
-        pending = read_lines(LINKS_PATH)
+        queued = read_lines(LINKS_PATH)
+        pending = [link for link in queued if is_target_link(link)]
+        if pending != queued:
+            write_lines(LINKS_PATH, pending)
         if pending:
             log(f"🔁 استكمال {len(pending)} روابط لم يصلها التنفيذ في تشغيل سابق.")
             return pending
-        log("🔎 لا توجد روابط جديدة.")
+        log("🔎 لا توجد روابط جديدة في القنوات المستهدفة.")
         return []
     append_unique(LINKS_PATH, current_batch)
     write_lines(PROCESSED_PATH, list(dict.fromkeys(read_lines(PROCESSED_PATH) + current_batch)))
-    log(f"🆕 عُثر على {len(current_batch)} رابط جديد؛ ستعالجه الحسابات الخمسة بالتوازي.")
+    log(
+        f"🆕 عُثر على {len(current_batch)} روابط جديدة من "
+        f"{successful_channels}/{len(TARGET_CHANNELS)} قنوات؛ "
+        "ستعالجها الحسابات الخمسة بالتوازي."
+    )
     return current_batch
 
 
@@ -140,6 +160,7 @@ def _send_account(account, links):
 
 def run_all_accounts(links, accounts, state_dir=None, max_links=None):
     """Submit each link from all configured accounts using parallel workers."""
+    links = [link for link in links if is_target_link(link)]
     if not links:
         log("💤 لا توجد روابط للتنفيذ.")
         return 0
@@ -211,7 +232,8 @@ def run_previous_links_until_five(accounts, state_dir=None):
         + list(reversed(read_lines(queue_path)))
     ))
     eligible = [link for link in all_links
-                if can_process(link, state_dir, successes, attempts)]
+                if is_target_link(link)
+                and can_process(link, state_dir, successes, attempts)]
     if not eligible:
         log("💤 لا توجد روابط سابقة مؤهلة للدفع.")
         return 0
@@ -226,7 +248,10 @@ def main():
     except ValueError as error:
         log(f"❌ تعذر تحميل الحسابات؛ تحقق من الأسرار: {error}")
         return 1
-    log(f"🚀 تشغيل حصاد | القناة: @{TARGET_CHANNEL} | الحسابات الخمسة بالتوازي")
+    log(
+        f"🚀 تشغيل حصاد | القنوات: {', '.join('@' + name for name in TARGET_CHANNELS)} | "
+        "الحسابات الخمسة بالتوازي"
+    )
     links = []
     processed_before_pull = set(read_lines(PROCESSED_PATH))
     fetch_failed = False

@@ -13,7 +13,7 @@ class MainAccountSelectionTests(unittest.TestCase):
         (4, "user-4", "password-4"),
         (5, "user-5", "password-5"),
     ])
-    @patch("main.pull_once", return_value=["https://t.me/hasadalyoum/101"])
+    @patch("main.pull_once", return_value=["https://t.me/aljnoubvoice/101"])
     @patch("main.read_lines", return_value=[])
     def test_main_runs_all_five_accounts_on_same_links(
         self, read_lines, pull_once, load_accounts, run_all_accounts
@@ -23,7 +23,7 @@ class MainAccountSelectionTests(unittest.TestCase):
         pull_once.assert_called_once_with()
         load_accounts.assert_called_once()
         run_all_accounts.assert_called_once_with(
-            ["https://t.me/hasadalyoum/101"], load_accounts.return_value,
+            ["https://t.me/aljnoubvoice/101"], load_accounts.return_value,
             state_dir=main.STATE_DIR,
         )
 
