@@ -1,27 +1,31 @@
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import main
 
 
 class MainAccountSelectionTests(unittest.TestCase):
-    @patch("main.run_browser_send", return_value=0)
-    @patch("main.BrowserSender")
-    @patch("main.select_rotating_account", return_value=(3, "user-3", "password-3"))
+    @patch("main.run_all_accounts", return_value=0)
+    @patch("main.load_accounts", return_value=[
+        (1, "user-1", "password-1"),
+        (2, "user-2", "password-2"),
+        (3, "user-3", "password-3"),
+        (4, "user-4", "password-4"),
+        (5, "user-5", "password-5"),
+    ])
     @patch("main.pull_once", return_value=["https://t.me/hasadalyoum/101"])
-    def test_main_uses_one_rotating_account_for_the_whole_run(
-        self, pull_once, select_account, browser_sender, run_browser_send
+    @patch("main.read_lines", return_value=[])
+    def test_main_runs_all_five_accounts_on_same_links(
+        self, read_lines, pull_once, load_accounts, run_all_accounts
     ):
-        sender = MagicMock()
-        browser_sender.return_value.__enter__.return_value = sender
-
         result = main.main()
-
         self.assertEqual(result, 0)
         pull_once.assert_called_once_with()
-        select_account.assert_called_once()
-        browser_sender.assert_called_once_with("user-3", "password-3")
-        run_browser_send.assert_called_once_with(sender, ["https://t.me/hasadalyoum/101"])
+        load_accounts.assert_called_once()
+        run_all_accounts.assert_called_once_with(
+            ["https://t.me/hasadalyoum/101"], load_accounts.return_value,
+            state_dir=main.STATE_DIR,
+        )
 
 
 if __name__ == "__main__":

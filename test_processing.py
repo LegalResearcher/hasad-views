@@ -101,20 +101,25 @@ class BatchProcessingTests(unittest.TestCase):
         self.assertEqual(main.run_browser_send(resumed, fallback), 0)
         self.assertEqual(resumed.calls, [batch[1]])
 
-    def test_previous_links_repeat_until_five_successes_when_no_new_links(self):
+    def test_previous_links_collect_successes_from_all_five_accounts(self):
         link = "https://t.me/hasadalyoum/41"
         with open(os.path.join(self.state, "processed_links.txt"), "w", encoding="utf-8") as file:
             file.write(link + "\n")
+        accounts = [(number, f"u{number}", f"p{number}") for number in range(1, 6)]
 
-        for expected_successes in range(1, 6):
-            sender = FakeSender()
-            self.assertEqual(main.run_previous_links_until_five(sender, self.state), 0)
-            self.assertEqual(sender.calls, [link])
-            self.assertEqual(load_successes(self.state)[link], expected_successes)
+        def all_accounts_succeeded(account, links):
+            return [(selected, "ok") for selected in links]
 
-        finished = FakeSender()
-        self.assertEqual(main.run_previous_links_until_five(finished, self.state), 0)
-        self.assertEqual(finished.calls, [])
+        with patch.object(main, "_send_account", side_effect=all_accounts_succeeded) as send:
+            self.assertEqual(main.run_previous_links_until_five(accounts, self.state), 0)
+            self.assertEqual(send.call_count, 5)
+            self.assertEqual(load_successes(self.state)[link], 5)
+            self.assertEqual(main.run_previous_links_until_five(accounts, self.state), 0)
+            self.assertEqual(load_successes(self.state)[link], 5)
+
+        with patch.object(main, "_send_account") as send:
+            self.assertEqual(main.run_previous_links_until_five(accounts, self.state), 0)
+            send.assert_not_called()
 
 
 if __name__ == "__main__":
