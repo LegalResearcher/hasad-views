@@ -252,6 +252,13 @@ def main():
         f"🚀 تشغيل حصاد | القنوات: {', '.join('@' + name for name in TARGET_CHANNELS)} | "
         "الحسابات الخمسة بالتوازي"
     )
+    queued = read_lines(LINKS_PATH)
+    pending = list(dict.fromkeys(link for link in queued if is_target_link(link)))
+    if pending != queued:
+        write_lines(LINKS_PATH, pending)
+    if pending:
+        log(f"⏳ معالجة {len(pending)} روابط معلقة في الطابور قبل سحب منشورات جديدة.")
+        return run_all_accounts(pending, accounts, state_dir=STATE_DIR)
     links = []
     processed_before_pull = set(read_lines(PROCESSED_PATH))
     fetch_failed = False
