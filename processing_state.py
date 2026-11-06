@@ -3,7 +3,6 @@ import json
 import os
 import tempfile
 
-MAX_SUCCESSES_PER_LINK = 5
 MAX_FAILURES_PER_LINK = 3
 
 
@@ -80,7 +79,6 @@ def can_process(link, state_dir, successes=None, failures=None):
     failures = load_failures(state_dir) if failures is None else failures
     return (
         not is_legacy_complete(link, state_dir)
-        and successes.get(link, 0) < MAX_SUCCESSES_PER_LINK
         and failures.get(link, 0) < MAX_FAILURES_PER_LINK
     )
 
@@ -92,8 +90,6 @@ def record_result(link, status, state_dir, successes=None, failures=None):
     if status == "ok":
         if is_legacy_complete(link, state_dir):
             return False, "legacy_complete"
-        if successes.get(link, 0) >= MAX_SUCCESSES_PER_LINK:
-            return False, "success_limit"
         successes[link] = successes.get(link, 0) + 1
         save_successes(state_dir, successes)
         return True, "success"

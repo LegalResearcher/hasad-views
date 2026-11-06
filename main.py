@@ -10,7 +10,6 @@ import requests
 from browser_sender import BrowserSender
 from processing_state import (
     MAX_FAILURES_PER_LINK,
-    MAX_SUCCESSES_PER_LINK,
     can_process,
     load_failures,
     load_successes,
@@ -221,7 +220,11 @@ def run_browser_send(sender, links):
 
 
 def run_previous_links_until_five(accounts, state_dir=None):
-    """Retry previous links, submitting each eligible link from all accounts."""
+    """Retry up to five eligible previous links from all accounts.
+
+    A link remains eligible for unlimited successful retries; only the
+    per-run link batch size and the failure limit constrain this fallback.
+    """
     state_dir = STATE_DIR if state_dir is None else state_dir
     processed_path = os.path.join(state_dir, "processed_links.txt")
     queue_path = os.path.join(state_dir, "telegram_links.txt")

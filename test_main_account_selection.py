@@ -27,6 +27,24 @@ class MainAccountSelectionTests(unittest.TestCase):
             state_dir=main.STATE_DIR,
         )
 
+    @patch("main.run_previous_links_until_five", return_value=0)
+    @patch("main.pull_once", return_value=[])
+    @patch("main.load_accounts", return_value=[
+        (1, "user-1", "password-1"),
+        (2, "user-2", "password-2"),
+        (3, "user-3", "password-3"),
+        (4, "user-4", "password-4"),
+        (5, "user-5", "password-5"),
+    ])
+    @patch("main.read_lines", return_value=[])
+    def test_main_retries_previous_links_when_no_new_links(
+        self, read_lines, load_accounts, pull_once, run_previous_links
+    ):
+        result = main.main()
+        self.assertEqual(result, 0)
+        pull_once.assert_called_once_with()
+        run_previous_links.assert_called_once_with(load_accounts.return_value)
+
 
 if __name__ == "__main__":
     unittest.main()
