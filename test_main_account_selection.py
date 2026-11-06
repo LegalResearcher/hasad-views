@@ -1,3 +1,5 @@
+import os
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -5,6 +7,21 @@ import main
 
 
 class MainAccountSelectionTests(unittest.TestCase):
+    def test_main_run_account_groups_alternate(self):
+        with tempfile.TemporaryDirectory() as state_dir:
+            environ = {}
+            for number in range(1, 10):
+                environ[f"SITE_USERNAME_{number}"] = f"user-{number}"
+                environ[f"SITE_PASSWORD_{number}"] = f"password-{number}"
+
+            first = main.load_accounts(environ, state_dir)
+            second = main.load_accounts(environ, state_dir)
+
+            self.assertEqual([account[0] for account in first], [1, 2, 3, 4, 5])
+            self.assertEqual([account[0] for account in second], [6, 7, 8, 9])
+            with open(os.path.join(state_dir, main.RUN_NUMBER_FILENAME), encoding="utf-8") as file:
+                self.assertEqual(file.read().strip(), '{"next_run": 3}')
+
     @patch("main.run_all_accounts", return_value=0)
     @patch("main.load_accounts", return_value=[
         (1, "user-1", "password-1"),

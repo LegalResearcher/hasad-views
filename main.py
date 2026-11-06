@@ -1,4 +1,5 @@
 import os
+import json
 import re
 import sys
 import tempfile
@@ -23,6 +24,8 @@ LINKS_PATH = os.path.join(STATE_DIR, "telegram_links.txt")
 PROCESSED_PATH = os.path.join(STATE_DIR, "processed_links.txt")
 TARGET_CHANNELS = ("aljnoubvoice", "shmsannews", "SanaaPressAgency")
 ACCOUNT_COUNT = 5
+ACCOUNT_GROUPS = (tuple(range(1, 6)), tuple(range(6, 10)))
+RUN_NUMBER_FILENAME = "main_run_number.json"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
@@ -118,10 +121,31 @@ def remove_from_queue(links):
     write_lines(LINKS_PATH, remaining)
 
 
-def load_accounts(environ):
+def load_accounts(environ, state_dir=None):
+    """Load the account group selected for this main workflow run.
+
+    Odd-numbered runs use accounts 1-5; even-numbered runs use accounts 6-9.
+    The next run number is persisted only after the selected credentials pass
+    validation, so a missing secret does not consume a run slot.
+    """
+    state_dir = STATE_DIR if state_dir is None else state_dir
+    run_path = os.path.join(state_dir, RUN_NUMBER_FILENAME)
+    run_number = 1
+    if os.path.exists(run_path):
+        try:
+            with open(run_path, "r", encoding="utf-8") as file:
+                saved = json.load(file)
+            run_number = saved["next_run"]
+        except (OSError, ValueError, KeyError, TypeError):
+            raise ValueError(f"Invalid {RUN_NUMBER_FILENAME}")
+        if (not isinstance(run_number, int) or isinstance(run_number, bool)
+                or run_number < 1):
+            raise ValueError(f"Invalid next_run in {RUN_NUMBER_FILENAME}")
+
+    account_numbers = ACCOUNT_GROUPS[(run_number - 1) % len(ACCOUNT_GROUPS)]
     accounts = []
     missing = []
-    for number in range(1, ACCOUNT_COUNT + 1):
+    for number in account_numbers:
         username = environ.get(f"SITE_USERNAME_{number}", "").strip()
         password = environ.get(f"SITE_PASSWORD_{number}", "")
         if not username:
@@ -131,6 +155,19 @@ def load_accounts(environ):
         accounts.append((number, username, password))
     if missing:
         raise ValueError("Missing required secrets: " + ", ".join(missing))
+
+    os.makedirs(state_dir, exist_ok=True)
+    fd, temporary_path = tempfile.mkstemp(prefix=".run-number-", dir=state_dir)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as file:
+            json.dump({"next_run": run_number + 1}, file)
+            file.write("\n")
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temporary_path, run_path)
+    finally:
+        if os.path.exists(temporary_path):
+            os.unlink(temporary_path)
     return accounts
 
 
@@ -164,8 +201,8 @@ def run_all_accounts(links, accounts, state_dir=None, max_links=None):
         log("💤 لا توجد روابط للتنفيذ.")
         return 0
     selected_links = links if max_links is None else links[:max_links]
-    log(f"🚀 إرسال {len(selected_links)} روابط من الحسابات الخمسة بالتوازي.")
-    with ThreadPoolExecutor(max_workers=ACCOUNT_COUNT) as pool:
+    log(f"🚀 إرسال {len(selected_links)} روابط من {len(accounts)} حسابات بالتوازي.")
+    with ThreadPoolExecutor(max_workers=len(accounts)) as pool:
         futures = [pool.submit(_send_account, account, selected_links) for account in accounts]
         account_results = [future.result() for future in futures]
 
@@ -187,13 +224,13 @@ def run_all_accounts(links, accounts, state_dir=None, max_links=None):
                         failures += status != "ok"
         else:
             failures += sum(status != "ok" for status in statuses)
-        log(f"انتهى الرابط {link}: {sum(status == 'ok' for status in statuses)}/5 نجاحات.")
+        log(f"انتهى الرابط {link}: {sum(status == 'ok' for status in statuses)}/{len(accounts)} نجاحات.")
     remove_from_queue(selected_links[:completed_prefix])
     # لروابط الروابط السابقة نسجل النتائج حتى تظل حدود النجاح/الفشل قائمة.
     for result in account_results:
         if len(result) < len(selected_links):
             failures += 1
-    log(f"اكتمل التشغيل؛ عولجت {completed_prefix} روابط من الحسابات الخمسة.")
+    log(f"اكتمل التشغيل؛ عولجت {completed_prefix} روابط من {len(accounts)} حسابات.")
     return 1 if failures else 0
 
 
@@ -241,7 +278,7 @@ def run_previous_links_until_five(accounts, state_dir=None):
         log("💤 لا توجد روابط سابقة مؤهلة للدفع.")
         return 0
     links = eligible[:5]
-    log(f"🔁 إعادة محاولة {len(links)} روابط سابقة بالحسابات الخمسة بالتوازي.")
+    log(f"🔁 إعادة محاولة {len(links)} روابط سابقة باستخدام {len(accounts)} حسابات بالتوازي.")
     return run_all_accounts(links, accounts, state_dir=state_dir)
 
 
@@ -253,7 +290,7 @@ def main():
         return 1
     log(
         f"🚀 تشغيل حصاد | القنوات: {', '.join('@' + name for name in TARGET_CHANNELS)} | "
-        "الحسابات الخمسة بالتوازي"
+        f"مجموعة الحسابات الحالية: {', '.join(str(account[0]) for account in accounts)}"
     )
     queued = read_lines(LINKS_PATH)
     pending = list(dict.fromkeys(link for link in queued if is_target_link(link)))
