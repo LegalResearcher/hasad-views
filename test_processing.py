@@ -48,10 +48,9 @@ class BatchProcessingTests(unittest.TestCase):
         self.assertEqual(main.read_lines(main.LINKS_PATH), [])
 
     def test_main_processes_queued_links_before_fetching_new_posts(self):
-        pending = [
-            "https://t.me/SanaaPressAgency/2073",
-            "https://t.me/aljnoubvoice/9086",
-        ]
+        excluded = "https://t.me/SanaaPressAgency/2073"
+        active = "https://t.me/aljnoubvoice/9086"
+        pending = [excluded, active]
         accounts = [(number, f"u{number}", f"p{number}") for number in range(1, 6)]
         main.write_lines(main.LINKS_PATH, pending)
 
@@ -61,43 +60,35 @@ class BatchProcessingTests(unittest.TestCase):
             self.assertEqual(main.main(), 0)
 
         run_all.assert_called_once_with(
-            pending, accounts, state_dir=main.STATE_DIR,
+            [active], accounts, state_dir=main.STATE_DIR,
             max_links=main.MAX_LINKS_PER_RUN,
         )
+        self.assertEqual(main.read_lines(main.LINKS_PATH), [active])
         pull_once.assert_not_called()
 
-    def test_pull_once_collects_links_from_all_three_allowed_channels(self):
-        channel_links = {
-            "aljnoubvoice": ["https://t.me/aljnoubvoice/101"],
-            "shmsannews": ["https://t.me/shmsannews/202"],
-            "SanaaPressAgency": ["https://t.me/SanaaPressAgency/303"],
-        }
+    def test_pull_once_collects_only_aljnoubvoice(self):
+        channel_links = {"aljnoubvoice": ["https://t.me/aljnoubvoice/101"]}
         with patch.object(
             main, "fetch_links", side_effect=lambda channel: channel_links[channel]
         ) as fetch:
             selected = main.pull_once()
 
-        self.assertEqual(fetch.call_args_list, [
-            call("aljnoubvoice"),
-            call("shmsannews"),
-            call("SanaaPressAgency"),
-        ])
-        self.assertEqual(selected, [
-            "https://t.me/aljnoubvoice/101",
-            "https://t.me/shmsannews/202",
-            "https://t.me/SanaaPressAgency/303",
-        ])
+        self.assertEqual(fetch.call_args_list, [call("aljnoubvoice")])
+        self.assertEqual(selected, ["https://t.me/aljnoubvoice/101"])
 
-    def test_manual_retry_rejects_removed_hasadalyoum_channel(self):
+    def test_manual_retry_rejects_excluded_channels(self):
         self.assertIsNone(retry_link.LINK_PATTERN.fullmatch(
             "https://t.me/hasadalyoum/101"
         ))
-        for channel in main.TARGET_CHANNELS:
-            self.assertIsNotNone(retry_link.LINK_PATTERN.fullmatch(
+        self.assertIsNotNone(retry_link.LINK_PATTERN.fullmatch(
+            "https://t.me/aljnoubvoice/101"
+        ))
+        self.assertTrue(main.is_target_link("https://t.me/aljnoubvoice/101"))
+        for channel in ("shmsannews", "SanaaPressAgency", "hasadalyoum"):
+            self.assertIsNone(retry_link.LINK_PATTERN.fullmatch(
                 f"https://t.me/{channel}/101"
             ))
-            self.assertTrue(main.is_target_link(f"https://t.me/{channel}/101"))
-        self.assertFalse(main.is_target_link("https://t.me/hasadalyoum/101"))
+            self.assertFalse(main.is_target_link(f"https://t.me/{channel}/101"))
 
     def test_old_hasadalyoum_queue_links_are_removed_not_resumed(self):
         old_link = "https://t.me/hasadalyoum/999"
