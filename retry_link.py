@@ -6,7 +6,7 @@ from account_rotation import select_rotating_account
 from browser_sender import BrowserSender
 
 STATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state")
-TARGET_CHANNELS = ("aljnoubvoice",)
+TARGET_CHANNELS = ("aljnoubvoice", "shmsannews", "SanaaPressAgency")
 CHANNEL_PATTERN = "|".join(re.escape(channel) for channel in TARGET_CHANNELS)
 LINK_PATTERN = re.compile(rf"^https://t\.me/(?:{CHANNEL_PATTERN})/\d+$")
 
