@@ -25,6 +25,7 @@ PROCESSED_PATH = os.path.join(STATE_DIR, "processed_links.txt")
 TARGET_CHANNELS = ("aljnoubvoice", "shmsannews", "SanaaPressAgency")
 ACCOUNT_COUNT = 5
 ACCOUNT_GROUPS = (tuple(range(1, 10)),)
+MAX_LINKS_PER_RUN = 5
 RUN_NUMBER_FILENAME = "main_run_number.json"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 "
@@ -77,7 +78,7 @@ def fetch_links(channel):
         raise RuntimeError(f"Telegram @{channel} returned HTTP {response.status_code}")
     ids = sorted({int(value) for value in re.findall(
         rf"/{re.escape(channel)}/(\d+)", response.text
-    )})
+    )}, reverse=True)
     return [f"https://t.me/{channel}/{number}" for number in ids]
 
 
@@ -110,7 +111,7 @@ def pull_once():
     log(
         f"🆕 عُثر على {len(current_batch)} روابط جديدة من "
         f"{successful_channels}/{len(TARGET_CHANNELS)} قنوات؛ "
-        "ستعالجها الحسابات الخمسة بالتوازي."
+        "ستعالجها الحسابات التسعة بالتوازي."
     )
     return current_batch
 
@@ -298,7 +299,9 @@ def main():
         write_lines(LINKS_PATH, pending)
     if pending:
         log(f"⏳ معالجة {len(pending)} روابط معلقة في الطابور قبل سحب منشورات جديدة.")
-        return run_all_accounts(pending, accounts, state_dir=STATE_DIR)
+        return run_all_accounts(
+            pending, accounts, state_dir=STATE_DIR, max_links=MAX_LINKS_PER_RUN
+        )
     links = []
     processed_before_pull = set(read_lines(PROCESSED_PATH))
     fetch_failed = False
@@ -310,7 +313,9 @@ def main():
     has_new_links = any(link not in processed_before_pull for link in links)
     if fetch_failed or not has_new_links:
         return run_previous_links_until_five(accounts)
-    return run_all_accounts(links, accounts, state_dir=STATE_DIR)
+    return run_all_accounts(
+        links, accounts, state_dir=STATE_DIR, max_links=MAX_LINKS_PER_RUN
+    )
 
 
 if __name__ == "__main__":

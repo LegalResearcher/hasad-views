@@ -43,7 +43,7 @@ class MainAccountSelectionTests(unittest.TestCase):
         load_accounts.assert_called_once()
         run_all_accounts.assert_called_once_with(
             ["https://t.me/aljnoubvoice/101"], load_accounts.return_value,
-            state_dir=main.STATE_DIR,
+            state_dir=main.STATE_DIR, max_links=main.MAX_LINKS_PER_RUN,
         )
 
     @patch("main.run_previous_links_until_five", return_value=0)

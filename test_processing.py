@@ -60,7 +60,10 @@ class BatchProcessingTests(unittest.TestCase):
                 patch.object(main, "pull_once") as pull_once:
             self.assertEqual(main.main(), 0)
 
-        run_all.assert_called_once_with(pending, accounts, state_dir=main.STATE_DIR)
+        run_all.assert_called_once_with(
+            pending, accounts, state_dir=main.STATE_DIR,
+            max_links=main.MAX_LINKS_PER_RUN,
+        )
         pull_once.assert_not_called()
 
     def test_pull_once_collects_links_from_all_three_allowed_channels(self):
