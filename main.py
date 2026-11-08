@@ -24,7 +24,7 @@ LINKS_PATH = os.path.join(STATE_DIR, "telegram_links.txt")
 PROCESSED_PATH = os.path.join(STATE_DIR, "processed_links.txt")
 TARGET_CHANNELS = ("aljnoubvoice", "shmsannews", "SanaaPressAgency")
 ACCOUNT_COUNT = 5
-ACCOUNT_GROUPS = (tuple(range(1, 6)), tuple(range(6, 10)))
+ACCOUNT_GROUPS = (tuple(range(1, 10)),)
 RUN_NUMBER_FILENAME = "main_run_number.json"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 "
