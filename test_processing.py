@@ -148,7 +148,7 @@ class BatchProcessingTests(unittest.TestCase):
         main.write_lines(os.path.join(self.state, "excluded_links.txt"), [excluded])
         accounts = [(1, "u1", "p1")]
         with patch.object(main, "run_all_accounts") as run_all:
-            self.assertEqual(main.run_previous_links_until_five(accounts, self.state), 0)
+            self.assertEqual(main.run_previous_links_until_nine(accounts, self.state), 0)
         run_all.assert_not_called()
         self.assertTrue(main.is_excluded_link(excluded, self.state))
         with patch.dict(os.environ, {"TARGET_LINK": excluded}), \
@@ -239,14 +239,14 @@ class BatchProcessingTests(unittest.TestCase):
             return [(selected, "ok") for selected in links]
 
         with patch.object(main, "_send_account", side_effect=all_accounts_succeeded) as send:
-            self.assertEqual(main.run_previous_links_until_five(accounts, self.state), 0)
+            self.assertEqual(main.run_previous_links_until_nine(accounts, self.state), 0)
             self.assertEqual(send.call_count, 5)
             self.assertEqual(load_successes(self.state)[link], 5)
-            self.assertEqual(main.run_previous_links_until_five(accounts, self.state), 0)
+            self.assertEqual(main.run_previous_links_until_nine(accounts, self.state), 0)
             self.assertEqual(load_successes(self.state)[link], 10)
 
         with patch.object(main, "_send_account", side_effect=all_accounts_succeeded) as send:
-            self.assertEqual(main.run_previous_links_until_five(accounts, self.state), 0)
+            self.assertEqual(main.run_previous_links_until_nine(accounts, self.state), 0)
             self.assertEqual(send.call_count, 5)
             self.assertEqual(load_successes(self.state)[link], 15)
 

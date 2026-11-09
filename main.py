@@ -26,7 +26,7 @@ PROCESSED_PATH = os.path.join(STATE_DIR, "processed_links.txt")
 TARGET_CHANNELS = ("aljnoubvoice", "shmsannews", "SanaaPressAgency")
 ACCOUNT_COUNT = 5
 ACCOUNT_GROUPS = (tuple(range(1, 10)),)
-MAX_LINKS_PER_RUN = 5
+MAX_LINKS_PER_RUN = 9
 RUN_NUMBER_FILENAME = "main_run_number.json"
 NEW_LINKS_ONLY_ONCE_FILENAME = "new_links_only_once.flag"
 HEADERS = {
@@ -276,8 +276,8 @@ def run_browser_send(sender, links):
     return 1 if failures else 0
 
 
-def run_previous_links_until_five(accounts, state_dir=None):
-    """Retry up to five eligible previous links from all accounts.
+def run_previous_links_until_nine(accounts, state_dir=None):
+    """Retry up to nine eligible previous links from all accounts.
 
     A link remains eligible for unlimited successful retries; only the
     per-run link batch size and the failure limit constrain this fallback.
@@ -298,7 +298,7 @@ def run_previous_links_until_five(accounts, state_dir=None):
     if not eligible:
         log("💤 لا توجد روابط سابقة مؤهلة للدفع.")
         return 0
-    links = eligible[:5]
+    links = eligible[:9]
     log(f"🔁 إعادة محاولة {len(links)} روابط سابقة باستخدام {len(accounts)} حسابات بالتوازي.")
     return run_all_accounts(links, accounts, state_dir=state_dir)
 
@@ -347,7 +347,7 @@ def main():
         log("💤 لا توجد روابط جديدة؛ تم تخطي الروابط السابقة لهذا التشغيل فقط.")
         return 0
     if fetch_failed or not has_new_links:
-        return run_previous_links_until_five(accounts)
+        return run_previous_links_until_nine(accounts)
     return run_all_accounts(
         links, accounts, state_dir=STATE_DIR, max_links=MAX_LINKS_PER_RUN
     )

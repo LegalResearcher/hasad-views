@@ -47,7 +47,7 @@ class MainAccountSelectionTests(unittest.TestCase):
             state_dir=main.STATE_DIR, max_links=main.MAX_LINKS_PER_RUN,
         )
 
-    @patch("main.run_previous_links_until_five", return_value=0)
+    @patch("main.run_previous_links_until_nine", return_value=0)
     @patch("main.pull_once", return_value=[])
     @patch("main.load_accounts", return_value=[
         (1, "user-1", "password-1"),
