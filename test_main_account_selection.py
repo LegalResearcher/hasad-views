@@ -37,7 +37,8 @@ class MainAccountSelectionTests(unittest.TestCase):
     def test_main_runs_all_nine_accounts_on_same_links(
         self, read_lines, pull_once, load_accounts, run_all_accounts
     ):
-        result = main.main()
+        with patch("main.consume_new_links_only_flag", return_value=False):
+            result = main.main()
         self.assertEqual(result, 0)
         pull_once.assert_called_once_with()
         load_accounts.assert_called_once()
@@ -63,7 +64,8 @@ class MainAccountSelectionTests(unittest.TestCase):
     def test_main_retries_previous_links_when_no_new_links(
         self, read_lines, load_accounts, pull_once, run_previous_links
     ):
-        result = main.main()
+        with patch("main.consume_new_links_only_flag", return_value=False):
+            result = main.main()
         self.assertEqual(result, 0)
         pull_once.assert_called_once_with()
         run_previous_links.assert_called_once_with(load_accounts.return_value)

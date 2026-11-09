@@ -28,6 +28,7 @@ ACCOUNT_COUNT = 5
 ACCOUNT_GROUPS = (tuple(range(1, 10)),)
 MAX_LINKS_PER_RUN = 5
 RUN_NUMBER_FILENAME = "main_run_number.json"
+NEW_LINKS_ONLY_ONCE_FILENAME = "new_links_only_once.flag"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
@@ -41,6 +42,16 @@ def log(message):
 def is_target_link(link):
     channels = "|".join(re.escape(channel) for channel in TARGET_CHANNELS)
     return bool(re.fullmatch(rf"https://t\.me/(?:{channels})/\d+", link))
+
+
+def consume_new_links_only_flag():
+    """Consume the one-shot request to skip pending and previous links."""
+    flag_path = os.path.join(STATE_DIR, NEW_LINKS_ONLY_ONCE_FILENAME)
+    if not os.path.exists(flag_path):
+        return False
+    os.remove(flag_path)
+    log("⏭️ هذا التشغيل للروابط الجديدة فقط؛ سيعود المنطق المعتاد في التشغيل التالي.")
+    return True
 
 
 def read_lines(path):
@@ -298,6 +309,7 @@ def main():
     except ValueError as error:
         log(f"❌ تعذر تحميل الحسابات؛ تحقق من الأسرار: {error}")
         return 1
+    new_links_only_once = consume_new_links_only_flag()
     log(
         f"🚀 تشغيل حصاد | القنوات: {', '.join('@' + name for name in TARGET_CHANNELS)} | "
         f"مجموعة الحسابات الحالية: {', '.join(str(account[0]) for account in accounts)}"
@@ -309,11 +321,13 @@ def main():
     ))
     if pending != queued:
         write_lines(LINKS_PATH, pending)
-    if pending:
+    if pending and not new_links_only_once:
         log(f"⏳ معالجة {len(pending)} روابط معلقة في الطابور قبل سحب منشورات جديدة.")
         return run_all_accounts(
             pending, accounts, state_dir=STATE_DIR, max_links=MAX_LINKS_PER_RUN
         )
+    if pending and new_links_only_once:
+        log("⏭️ تخطي الروابط المعلقة في هذا التشغيل ذي المرة الواحدة.")
     links = []
     processed_before_pull = set(read_lines(PROCESSED_PATH))
     fetch_failed = False
@@ -323,6 +337,15 @@ def main():
         fetch_failed = True
         log(f"❌ تعذر سحب الروابط الجديدة ({type(error).__name__}: {error})")
     has_new_links = any(link not in processed_before_pull for link in links)
+    if new_links_only_once:
+        if fetch_failed:
+            return 1
+        if has_new_links:
+            return run_all_accounts(
+                links, accounts, state_dir=STATE_DIR, max_links=MAX_LINKS_PER_RUN
+            )
+        log("💤 لا توجد روابط جديدة؛ تم تخطي الروابط السابقة لهذا التشغيل فقط.")
+        return 0
     if fetch_failed or not has_new_links:
         return run_previous_links_until_five(accounts)
     return run_all_accounts(

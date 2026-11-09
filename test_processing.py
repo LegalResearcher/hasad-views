@@ -23,9 +23,11 @@ class BatchProcessingTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.state = self.temp.name
         self.old_paths = (
+            main.STATE_DIR,
             main.LINKS_PATH,
             main.PROCESSED_PATH,
         )
+        main.STATE_DIR = self.state
         main.LINKS_PATH = os.path.join(self.state, "telegram_links.txt")
         main.PROCESSED_PATH = os.path.join(self.state, "processed_links.txt")
         for path in (main.LINKS_PATH, main.PROCESSED_PATH):
@@ -33,6 +35,7 @@ class BatchProcessingTests(unittest.TestCase):
 
     def tearDown(self):
         (
+            main.STATE_DIR,
             main.LINKS_PATH,
             main.PROCESSED_PATH,
         ) = self.old_paths
@@ -65,6 +68,43 @@ class BatchProcessingTests(unittest.TestCase):
             max_links=main.MAX_LINKS_PER_RUN,
         )
         pull_once.assert_not_called()
+
+    def test_new_links_only_flag_applies_once_then_restores_normal_queue_logic(self):
+        pending = "https://t.me/aljnoubvoice/901"
+        new_link = "https://t.me/aljnoubvoice/902"
+        main.write_lines(main.LINKS_PATH, [pending])
+        main.write_lines(main.PROCESSED_PATH, [pending])
+        flag_path = os.path.join(main.STATE_DIR, main.NEW_LINKS_ONLY_ONCE_FILENAME)
+        with open(flag_path, "w", encoding="utf-8") as file:
+            file.write("1\n")
+        accounts = [(1, "u1", "p1")]
+
+        with (
+            patch.object(main, "load_accounts", return_value=accounts),
+            patch.object(main, "pull_once", return_value=[new_link]) as pull_once,
+            patch.object(main, "run_all_accounts", return_value=0) as run_all,
+        ):
+            self.assertEqual(main.main(), 0)
+
+        pull_once.assert_called_once_with()
+        run_all.assert_called_once_with(
+            [new_link], accounts, state_dir=main.STATE_DIR,
+            max_links=main.MAX_LINKS_PER_RUN,
+        )
+        self.assertFalse(os.path.exists(flag_path))
+
+        with (
+            patch.object(main, "load_accounts", return_value=accounts),
+            patch.object(main, "pull_once") as pull_once,
+            patch.object(main, "run_all_accounts", return_value=0) as run_all,
+        ):
+            self.assertEqual(main.main(), 0)
+
+        pull_once.assert_not_called()
+        run_all.assert_called_once_with(
+            [pending], accounts, state_dir=main.STATE_DIR,
+            max_links=main.MAX_LINKS_PER_RUN,
+        )
 
     def test_pull_once_collects_links_from_all_three_allowed_channels(self):
         channel_links = {
