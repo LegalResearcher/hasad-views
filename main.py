@@ -14,6 +14,7 @@ from processing_state import (
     can_process,
     load_failures,
     load_successes,
+    is_excluded_link,
     record_result,
 )
 
@@ -95,7 +96,10 @@ def pull_once():
         raise RuntimeError("تعذر سحب الروابط من جميع القنوات المستهدفة")
     discovered = list(dict.fromkeys(discovered))
     processed = set(read_lines(PROCESSED_PATH))
-    current_batch = [link for link in discovered if link not in processed]
+    current_batch = [
+        link for link in discovered
+        if link not in processed and not is_excluded_link(link, STATE_DIR)
+    ]
     if not current_batch:
         queued = read_lines(LINKS_PATH)
         pending = [link for link in queued if is_target_link(link)]
@@ -197,7 +201,11 @@ def _send_account(account, links):
 
 def run_all_accounts(links, accounts, state_dir=None, max_links=None):
     """Submit each link from all configured accounts using parallel workers."""
-    links = [link for link in links if is_target_link(link)]
+    effective_state_dir = STATE_DIR if state_dir is None else state_dir
+    links = [
+        link for link in links
+        if is_target_link(link) and not is_excluded_link(link, effective_state_dir)
+    ]
     if not links:
         log("💤 لا توجد روابط للتنفيذ.")
         return 0
@@ -274,6 +282,7 @@ def run_previous_links_until_five(accounts, state_dir=None):
     ))
     eligible = [link for link in all_links
                 if is_target_link(link)
+                and not is_excluded_link(link, state_dir)
                 and can_process(link, state_dir, successes, attempts)]
     if not eligible:
         log("💤 لا توجد روابط سابقة مؤهلة للدفع.")
@@ -294,7 +303,10 @@ def main():
         f"مجموعة الحسابات الحالية: {', '.join(str(account[0]) for account in accounts)}"
     )
     queued = read_lines(LINKS_PATH)
-    pending = list(dict.fromkeys(link for link in queued if is_target_link(link)))
+    pending = list(dict.fromkeys(
+        link for link in queued
+        if is_target_link(link) and not is_excluded_link(link, STATE_DIR)
+    ))
     if pending != queued:
         write_lines(LINKS_PATH, pending)
     if pending:

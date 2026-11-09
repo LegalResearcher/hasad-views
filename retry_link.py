@@ -4,6 +4,7 @@ import sys
 
 from account_rotation import select_rotating_account
 from browser_sender import BrowserSender
+from processing_state import is_excluded_link
 
 STATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state")
 TARGET_CHANNELS = ("aljnoubvoice", "shmsannews", "SanaaPressAgency")
@@ -32,6 +33,9 @@ def main():
     if not LINK_PATTERN.fullmatch(link):
         channels = ", ".join(TARGET_CHANNELS)
         log(f"❌ الرابط غير صالح؛ يلزم رابط منشور من إحدى القنوات: {channels}.")
+        return 2
+    if is_excluded_link(link, STATE_DIR):
+        log(f"⏭️ الرابط مستثنى من التشغيلات القادمة: {link}")
         return 2
     try:
         account_number, username, password = select_rotating_account(os.environ, STATE_DIR)

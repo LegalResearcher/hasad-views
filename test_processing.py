@@ -102,6 +102,19 @@ class BatchProcessingTests(unittest.TestCase):
         ):
             self.assertEqual(main.pull_once(), [])
 
+    def test_excluded_links_are_skipped_from_fallback_and_manual_retry(self):
+        excluded = "https://t.me/aljnoubvoice/9232"
+        main.write_lines(os.path.join(self.state, "processed_links.txt"), [excluded])
+        main.write_lines(os.path.join(self.state, "excluded_links.txt"), [excluded])
+        accounts = [(1, "u1", "p1")]
+        with patch.object(main, "run_all_accounts") as run_all:
+            self.assertEqual(main.run_previous_links_until_five(accounts, self.state), 0)
+        run_all.assert_not_called()
+        self.assertTrue(main.is_excluded_link(excluded, self.state))
+        with patch.dict(os.environ, {"TARGET_LINK": excluded}), \
+                patch.object(retry_link, "STATE_DIR", self.state):
+            self.assertEqual(retry_link.main(), 2)
+
     def test_manual_retry_accepts_active_channels_but_rejects_hasadalyoum(self):
         self.assertIsNone(retry_link.LINK_PATTERN.fullmatch(
             "https://t.me/hasadalyoum/101"

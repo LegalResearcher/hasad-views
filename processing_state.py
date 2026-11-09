@@ -17,6 +17,18 @@ def read_lines(path):
         return [line.strip() for line in file if line.strip()]
 
 
+
+def load_excluded_links(state_dir):
+    """Return links explicitly excluded from automatic and manual retries."""
+    path = _path(state_dir, "excluded_links.txt")
+    if not os.path.exists(path):
+        return set()
+    with open(path, "r", encoding="utf-8") as file:
+        return {line.strip() for line in file if line.strip()}
+
+def is_excluded_link(link, state_dir):
+    return link in load_excluded_links(state_dir)
+
 def _load_json(path):
     if not os.path.exists(path):
         return {}
