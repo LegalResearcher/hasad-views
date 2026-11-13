@@ -5,6 +5,7 @@ import sys
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier, BrokenBarrierError
 
 import requests
 
@@ -187,31 +188,53 @@ def load_accounts(environ, state_dir=None):
     return accounts
 
 
-def _send_account(account, links):
+def _send_account(account, links, barrier):
+    """Process links in order, synchronizing all accounts after each link."""
     number, username, password = account
     results = []
+    sender = None
+    sender_context = None
+    stopped = False
+
     try:
-        with BrowserSender(username, password) as sender:
-            for link in links:
-                log(f"الحساب {number}: معالجة {link}")
-                try:
-                    status = sender(link)
-                except Exception as error:
-                    log(f"الحساب {number}: تعذر التنفيذ ({type(error).__name__}: {error})")
-                    status = "fail"
-                results.append((link, status))
-                if status == "fatal":
-                    log(f"الحساب {number}: توقف بسبب مشكلة دخول أو رصيد.")
-                    break
+        sender_context = BrowserSender(username, password)
+        sender = sender_context.__enter__()
     except Exception as error:
+        stopped = True
         log(f"الحساب {number}: تعذر تشغيل المتصفح ({type(error).__name__}: {error})")
-        # سجّل الفشل للروابط التي لم يبدأ هذا الحساب بمعالجتها.
-        results.extend((link, "fail") for link in links[len(results):])
+
+    for link in links:
+        if stopped:
+            status = "fail"
+        else:
+            log(f"الحساب {number}: معالجة {link}")
+            try:
+                status = sender(link)
+            except Exception as error:
+                log(f"الحساب {number}: تعذر التنفيذ ({type(error).__name__}: {error})")
+                status = "fail"
+            if status == "fatal":
+                log(f"الحساب {number}: توقف بسبب مشكلة دخول أو رصيد.")
+                stopped = True
+        results.append((link, status))
+
+        # كل حساب يصل إلى الحاجز بعد إنهاء الرابط الحالي، أو تسجيل تعذره.
+        # بذلك لا يبدأ أي حساب الرابط التالي حتى تنتهي الحسابات الأخرى.
+        try:
+            barrier.wait()
+        except BrokenBarrierError:
+            stopped = True
+
+    if sender_context is not None:
+        try:
+            sender_context.__exit__(None, None, None)
+        except Exception as error:
+            log(f"الحساب {number}: تعذر إغلاق المتصفح ({type(error).__name__}: {error})")
     return results
 
 
 def run_all_accounts(links, accounts, state_dir=None, max_links=None):
-    """Submit each link from all configured accounts using parallel workers."""
+    """Submit each link from all configured accounts in synchronized rounds."""
     effective_state_dir = STATE_DIR if state_dir is None else state_dir
     links = [
         link for link in links
@@ -221,14 +244,20 @@ def run_all_accounts(links, accounts, state_dir=None, max_links=None):
         log("💤 لا توجد روابط للتنفيذ.")
         return 0
     selected_links = links if max_links is None else links[:max_links]
-    log(f"🚀 إرسال {len(selected_links)} روابط من {len(accounts)} حسابات بالتوازي.")
+    log(
+        f"🚀 إرسال {len(selected_links)} روابط من {len(accounts)} حسابات؛ "
+        "تنتظر الحسابات اكتمال كل رابط قبل الانتقال للرابط التالي."
+    )
+    barrier = Barrier(len(accounts))
     with ThreadPoolExecutor(max_workers=len(accounts)) as pool:
-        futures = [pool.submit(_send_account, account, selected_links) for account in accounts]
+        futures = [
+            pool.submit(_send_account, account, selected_links, barrier)
+            for account in accounts
+        ]
         account_results = [future.result() for future in futures]
 
     failures = 0
-    # لا نحذف من الطابور إلا الروابط التي بدأتها الحسابات الخمسة، لتبقى الروابط
-    # التي لم يصل إليها أحد الحسابات بعد توقفه المفاجئ قابلة للاستكمال.
+    # لا نحذف من الطابور إلا الروابط التي بدأتها جميع الحسابات.
     completed_prefix = min((len(result) for result in account_results), default=0)
     for link in selected_links[:completed_prefix]:
         statuses = [dict(result).get(link, "fail") for result in account_results]
@@ -246,7 +275,6 @@ def run_all_accounts(links, accounts, state_dir=None, max_links=None):
             failures += sum(status != "ok" for status in statuses)
         log(f"انتهى الرابط {link}: {sum(status == 'ok' for status in statuses)}/{len(accounts)} نجاحات.")
     remove_from_queue(selected_links[:completed_prefix])
-    # لروابط الروابط السابقة نسجل النتائج حتى تظل حدود النجاح/الفشل قائمة.
     for result in account_results:
         if len(result) < len(selected_links):
             failures += 1

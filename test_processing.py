@@ -235,7 +235,7 @@ class BatchProcessingTests(unittest.TestCase):
             file.write(link + "\n")
         accounts = [(number, f"u{number}", f"p{number}") for number in range(1, 6)]
 
-        def all_accounts_succeeded(account, links):
+        def all_accounts_succeeded(account, links, barrier):
             return [(selected, "ok") for selected in links]
 
         with patch.object(main, "_send_account", side_effect=all_accounts_succeeded) as send:
@@ -253,3 +253,50 @@ class BatchProcessingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SynchronizedAccountProcessingTests(unittest.TestCase):
+    def test_accounts_finish_each_link_before_any_account_starts_the_next(self):
+        links = [
+            "https://t.me/aljnoubvoice/801",
+            "https://t.me/aljnoubvoice/802",
+            "https://t.me/aljnoubvoice/803",
+        ]
+        accounts = [(number, f"u{number}", f"p{number}") for number in range(1, 4)]
+        completed = {link: set() for link in links}
+        events = []
+        lock = __import__("threading").Lock()
+
+        class StubBrowserSender:
+            def __init__(self, username, password):
+                self.account = int(username[1:])
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def __call__(self, link):
+                with lock:
+                    self.assert_previous_link_complete(link, completed, links)
+                    events.append((self.account, link))
+                    completed[link].add(self.account)
+                return "ok"
+
+            @staticmethod
+            def assert_previous_link_complete(link, completed, links):
+                index = links.index(link)
+                if index:
+                    previous = links[index - 1]
+                    if len(completed[previous]) != 3:
+                        raise AssertionError(
+                            f"Started {link} before every account finished {previous}"
+                        )
+
+        with patch.object(main, "BrowserSender", StubBrowserSender):
+            self.assertEqual(main.run_all_accounts(links, accounts), 0)
+
+        self.assertEqual(len(events), len(accounts) * len(links))
+        for link in links:
+            self.assertEqual(completed[link], {1, 2, 3})
